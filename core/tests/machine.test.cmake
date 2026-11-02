@@ -10,3 +10,10 @@ add_test(NAME config_frames COMMAND config_frames_test)
 # The stand-in's readkey and getjoystick, with a cartridge of the tests' own.
 o2_test(stub_test stub_test.c)
 add_test(NAME stub_boot COMMAND stub_test)
+
+# The FujiNet cartridge and its transport against a stand-in FujiNet on
+# loopback: a MOUNT_IMAGE with a pushed image, the staging, the swap at the next
+# fetch of $400 and the trace tap held to the bytes on the wire. POSIX (77).
+o2_test(cart_test cart_test.c)
+add_test(NAME cart COMMAND cart_test)
+set_tests_properties(cart PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
