@@ -276,8 +276,13 @@ NSButton *O2Button(NSString *title, id target, SEL action)
         return;
     }
     const double iw = (double)CGImageGetWidth(_image), ih = (double)CGImageGetHeight(_image);
-    const int x = (int)floor((p.x - _dest.origin.x) * iw / _dest.size.width);
-    const int y = (int)floor((NSMaxY(_dest) - p.y) * ih / _dest.size.height);
+    int x = (int)floor((p.x - _dest.origin.x) * iw / _dest.size.width);
+    int y = (int)floor((NSMaxY(_dest) - p.y) * ih / _dest.size.height);
+    /* the picture's top edge is the rectangle's far side: keep it inside */
+    if (x > (int)iw - 1) x = (int)iw - 1;
+    if (y > (int)ih - 1) y = (int)ih - 1;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
     [self report:x y:y];
 }
 
@@ -290,7 +295,9 @@ NSButton *O2Button(NSString *title, id target, SEL action)
 
 /* ---- a text view whose lines can be clicked ----------------------------------------- */
 
-@implementation O2LineTextView
+@implementation O2LineTextView {
+    CGFloat _wheel;                   /* the part of a line not yet scrolled */
+}
 - (void)mouseDown:(NSEvent *)event
 {
     if (!self.onClickLine) {
@@ -309,7 +316,17 @@ NSButton *O2Button(NSString *title, id target, SEL action)
 
 - (void)scrollWheel:(NSEvent *)event
 {
-    if (self.onScroll) self.onScroll((int)(-event.scrollingDeltaY / 6.0));
-    else [super scrollWheel:event];
+    if (!self.onScroll) {
+        [super scrollWheel:event];
+        return;
+    }
+    /* a wheel notch reports lines already; a trackpad, points */
+    CGFloat dy = -event.scrollingDeltaY;
+    if (event.hasPreciseScrollingDeltas) dy /= 14.0;
+    _wheel += dy;
+    const int lines = (int)_wheel;
+    if (lines == 0) return;
+    _wheel -= lines;
+    self.onScroll(lines);
 }
 @end

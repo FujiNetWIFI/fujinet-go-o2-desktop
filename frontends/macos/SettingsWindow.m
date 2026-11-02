@@ -34,7 +34,7 @@ static NSString *nsstr(const char *s)
     BOOL _dirty;                 /* an option changed that a power cycle applies */
 
     NSPopUpButton *_machinePopup;
-    NSTextField *_biosStatus, *_fontStatus, *_voiceStatus;
+    NSTextField *_biosStatus, *_fontStatus, *_voiceStatus, *_machineWarning;
     NSMutableArray<NSTextField *> *_romStates;   /* by o2session_rom_item index */
     NSTextField *_romPath;
     NSPopUpButton *_aspectPopup;
@@ -56,6 +56,7 @@ static NSString *nsstr(const char *s)
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_padTimer invalidate];
 }
 
@@ -144,6 +145,9 @@ static NSString *nsstr(const char *s)
         : @"Not imported: text is blank";
     _voiceStatus.stringValue = o2session_have_voice(_session)
         ? @"Imported" : @"Not imported";
+    /* the G7400 will not start without its own BIOS: say so as it is picked */
+    _machineWarning.stringValue = (m == O2_MACHINE_VIDEOPAC_PLUS && !o2session_have_bios(_session, m))
+        ? @"The Videopac+ G7400 needs its BIOS: Machine ▸ Import BIOS…" : @"";
 }
 
 - (NSView *)machinePage
@@ -158,10 +162,13 @@ static NSString *nsstr(const char *s)
     _biosStatus = [self label:@""];
     _fontStatus = [self label:@""];
     _voiceStatus = [self label:@""];
+    _machineWarning = [self label:@""];
+    _machineWarning.textColor = NSColor.systemRedColor;
 
     NSArray<NSArray<NSView *> *> *rows = @[
         @[ [self heading:@"Machine"], [self note:@"applies with a power cycle when this window closes"] ],
         @[ [self label:@"Console"], _machinePopup ],
+        @[ [self label:@""], _machineWarning ],
         @[ [self label:@""], [self checkBoxForKey:"use_bios" title:@"Use the imported BIOS" fallback:1] ],
         @[ [self label:@""],
            [self note:@"off: the app's own stand-in always, which runs CONFIG and FujiNet apps but no games"] ],
@@ -430,23 +437,36 @@ static NSString *nsstr(const char *s)
     [self refreshWebUi];
 }
 
-- (void)startPadTimer
+/* Hot-plugged gamepads, twice a second, while the window can be seen. */
+- (void)updatePadTimer
 {
-    [_padTimer invalidate];
-    _padGeneration = o2session_gamepad_generation(_session);
-    [self refreshPadList];
-    __weak O2SettingsWindow *weakSelf = self;
-    _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
-        (void)t;
-        O2SettingsWindow *s = weakSelf;
-        if (!s) return;
-        const unsigned gen = o2session_gamepad_generation(s->_session);
-        if (gen != s->_padGeneration) {
-            s->_padGeneration = gen;
-            [s refreshPadList];
-        }
-    }];
-    _padTimer.tolerance = 0.25;
+    const BOOL want = _window && [_window isVisible] && ![_window isMiniaturized] &&
+                      ([_window occlusionState] & NSWindowOcclusionStateVisible);
+    if (want && !_padTimer) {
+        _padGeneration = o2session_gamepad_generation(_session);
+        [self refreshPadList];
+        __weak O2SettingsWindow *weakSelf = self;
+        _padTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
+            (void)t;
+            O2SettingsWindow *s = weakSelf;
+            if (!s) return;
+            const unsigned gen = o2session_gamepad_generation(s->_session);
+            if (gen != s->_padGeneration) {
+                s->_padGeneration = gen;
+                [s refreshPadList];
+            }
+        }];
+        _padTimer.tolerance = 0.25;
+    } else if (!want && _padTimer) {
+        [_padTimer invalidate];
+        _padTimer = nil;
+    }
+}
+
+- (void)visibilityChanged:(NSNotification *)note
+{
+    (void)note;
+    [self updatePadTimer];
 }
 
 - (void)show
@@ -472,10 +492,15 @@ static NSString *nsstr(const char *s)
         _window.delegate = self;
         _window.contentView = tabs;
         [_window center];
+        for (NSString *name in @[NSWindowDidChangeOcclusionStateNotification,
+                                 NSWindowDidMiniaturizeNotification, NSWindowDidDeminiaturizeNotification])
+            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(visibilityChanged:)
+                                                         name:name object:_window];
     }
     [self refresh];
-    [self startPadTimer];
+    [self refreshPadList];
     [_window makeKeyAndOrderFront:nil];
+    [self updatePadTimer];
 }
 
 - (void)windowWillClose:(NSNotification *)note

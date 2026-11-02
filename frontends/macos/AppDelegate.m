@@ -110,7 +110,8 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender
 {
-    NSArray *urls = [[sender draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:nil];
+    NSArray *urls = [[sender draggingPasteboard] readObjectsForClasses:@[[NSURL class]]
+        options:@{ NSPasteboardURLReadingFileURLsOnlyKey: @YES }];
     if ([urls count] == 0) return NO;
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
     for (NSURL *u in urls) [paths addObject:[u path]];
@@ -184,6 +185,9 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
                     backing:NSBackingStoreBuffered
                       defer:NO];
     [_window setTitle:APP_TITLE];
+    /* NSWindow's default is to release itself on close, which ARC then does
+     * a second time: the window is kept, and closing it quits (below) */
+    [_window setReleasedWhenClosed:NO];
     [_window setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
     [_window center];
 
@@ -250,14 +254,10 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 
     o2session_start_opts opts;
     o2session_default_opts(_session, &opts);
-    if (o2session_start(_session, &opts) != 0) {
-        NSAlert *a = [[NSAlert alloc] init];
-        [a setMessageText:@"Could not start"];
-        [a setInformativeText:[self lastError]];
-        [a runModal];
-    }
+    const BOOL started = o2session_start(_session, &opts) == 0;
     _launched = YES;
     _toastGeneration = o2session_gamepad_generation(_session);
+    if (!started) [self reportRefusal:[self lastError] title:@"Could not start"];
     if (media) [self loadMediaPaths:@[media]];
 
     /* The family's launch hooks, for when the app misbehaves before a menu
@@ -266,30 +266,69 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if (getenv("O2_OPEN_DEBUGGER")) [O2DebuggerWindow showForSession:_session];
     if (getenv("O2_OPEN_SETTINGS")) [self showSettings:nil];
 
-    _statusTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES
-        block:^(NSTimer *t) { (void)t; [weakSelf updateTitle]; }];
-    _statusTimer.tolerance = 0.5;
-    /* System actions the gamepad thread resolved (it cannot touch AppKit),
-     * gamepads coming and going, and what the running machine is missing. */
-    _sysactTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES
-        block:^(NSTimer *t) {
-            (void)t;
-            O2AppDelegate *s = weakSelf;
-            if (!s) return;
-            int sa;
-            while (o2session_sysaction_take(s->_session, &sa)) [s runSysaction:sa];
-            const unsigned gen = o2session_gamepad_generation(s->_session);
-            if (gen != s->_toastGeneration) {
-                s->_toastGeneration = gen;
-                char msg[160];
-                if (o2session_gamepad_last_event(s->_session, msg, sizeof msg) > 0)
-                    [s showToast:nsstr(msg)];
-            }
-            [s checkMissing];
-        }];
-    _sysactTimer.tolerance = 0.05;
+    /* The timers below run only while the machine's window can be seen: they
+     * follow the same notices the display's frame clock does. */
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    for (NSString *name in @[NSWindowDidChangeOcclusionStateNotification, NSWindowDidMiniaturizeNotification,
+                             NSWindowDidDeminiaturizeNotification, NSApplicationDidHideNotification,
+                             NSApplicationDidUnhideNotification])
+        [nc addObserver:self selector:@selector(visibilityChanged:) name:name object:nil];
     [self updateTitle];
     [self checkMissing];
+    [self updateTimers];
+}
+
+/* What the 10 Hz timer does: system actions the gamepad thread resolved (it
+ * cannot touch AppKit), gamepads coming and going, and what the running
+ * machine is missing. */
+- (void)sysactTick
+{
+    int sa;
+    while (o2session_sysaction_take(_session, &sa)) [self runSysaction:sa];
+    const unsigned gen = o2session_gamepad_generation(_session);
+    if (gen != _toastGeneration) {
+        _toastGeneration = gen;
+        char msg[160];
+        if (o2session_gamepad_last_event(_session, msg, sizeof msg) > 0)
+            [self showToast:nsstr(msg)];
+    }
+    [self checkMissing];
+}
+
+- (BOOL)windowCanBeSeen:(NSWindow *)w
+{
+    return w && [w isVisible] && ![w isMiniaturized] &&
+           ([w occlusionState] & NSWindowOcclusionStateVisible) && ![NSApp isHidden];
+}
+
+/* The status and system-action timers, and the console log's, run while their
+ * windows can be seen; they catch up once when they start again. */
+- (void)updateTimers
+{
+    const BOOL want = _launched && [self windowCanBeSeen:_window];
+    if (want && !_sysactTimer) {
+        __weak O2AppDelegate *weakSelf = self;
+        _statusTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES
+            block:^(NSTimer *t) { (void)t; [weakSelf updateTitle]; }];
+        _statusTimer.tolerance = 0.5;
+        _sysactTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES
+            block:^(NSTimer *t) { (void)t; [weakSelf sysactTick]; }];
+        _sysactTimer.tolerance = 0.05;
+        [self updateTitle];
+        [self sysactTick];
+    } else if (!want && _sysactTimer) {
+        [_statusTimer invalidate];
+        [_sysactTimer invalidate];
+        _statusTimer = nil;
+        _sysactTimer = nil;
+    }
+    [self updateLogTimer];
+}
+
+- (void)visibilityChanged:(NSNotification *)note
+{
+    (void)note;
+    [self updateTimers];
 }
 
 - (void)showToast:(NSString *)text
@@ -369,6 +408,21 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
         if (r != NSAlertFirstButtonReturn) return;
         dispatch_async(dispatch_get_main_queue(), ^{ [self importRomsFromPanel:NO]; });
     }];
+}
+
+/* The session refused to power up or to load something. When importing a ROM
+ * would fix it (its message points at Import BIOS) the alert offers that,
+ * and the cartridge is retried after; otherwise it is just said. */
+- (void)reportRefusal:(NSString *)why title:(NSString *)plainTitle
+{
+    if (![why containsString:@"Import BIOS"]) {
+        [self alert:plainTitle text:why];
+        return;
+    }
+    NSString *title = [why containsString:@"Voice"] ? @"This cartridge needs The Voice's ROMs"
+                    : [why containsString:@"G7400"] ? @"The Videopac+ G7400 needs its BIOS"
+                    : @"This cartridge needs the Odyssey 2 BIOS";
+    [self askForRoms:why title:title];
 }
 
 - (void)runSysaction:(int)sa
@@ -518,7 +572,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     _smoothItem = [self item:view title:@"Smooth Scaling" action:@selector(toggleSmooth:) key:@""];
     [_smoothItem setState:(o2session_get_int(_session, "smooth", 0) ? NSControlStateValueOn : NSControlStateValueOff)];
     /* F11 toggles it too, from the machine's window (see O2ContentView). */
-    NSMenuItem *fs = [self item:view title:@"Enter Full Screen" action:@selector(toggleFullScreenWindow:) key:@"f"];
+    NSMenuItem *fs = [view addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
     [fs setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
     [viewItem setSubmenu:view];
     [bar addItem:viewItem];
@@ -603,15 +657,8 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 {
     if (o2session_load_cart(_session, [path fileSystemRepresentation]) != 0) {
         NSString *why = [self lastError];
-        if ([why containsString:@"Import BIOS"]) {
-            _refusedCart = path;
-            NSString *title = [why containsString:@"Voice"] ? @"This cartridge needs The Voice's ROMs"
-                            : [why containsString:@"G7400"] ? @"The Videopac+ G7400 needs its BIOS"
-                            : @"This cartridge needs the Odyssey 2 BIOS";
-            [self askForRoms:why title:title];
-        } else {
-            [self alert:@"Could not open" text:why];
-        }
+        if ([why containsString:@"Import BIOS"]) _refusedCart = path;
+        [self reportRefusal:why title:@"Could not open"];
     } else {
         _refusedCart = nil;
     }
@@ -740,13 +787,16 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     [self alert:(imported > 0 ? @"BIOS Imported" : @"Nothing Imported") text:text];
     if (imported <= 0) return;
 
+    /* what is missing is a snapshot from the last power-up: a power cycle
+     * with the new ROMs is what clears it (a machine that could not start has
+     * none to clear) */
     if (_refusedCart) {
         NSString *cart = _refusedCart;
         _refusedCart = nil;
         [self openCartAtPath:cart];
-    } else if (o2session_missing(_session)) {
+    } else if (!o2session_is_running(_session) || o2session_missing(_session)) {
         if (o2session_restart(_session) != 0)
-            [self alert:@"Could not start" text:[self lastError]];
+            [self reportRefusal:[self lastError] title:@"Could not start"];
         else
             [self showToast:@"The console was power-cycled with the new ROMs."];
     }
@@ -830,7 +880,6 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 
 - (void)toggleControllers:(id)sender { (void)sender; [_controllers toggle]; }
 - (void)toggleDebugger:(id)sender { (void)sender; [O2DebuggerWindow toggleForSession:_session]; }
-- (void)toggleFullScreenWindow:(id)sender { (void)sender; [_window toggleFullScreen:nil]; }
 
 /* aspect 0: the TV's 4:3 (the default); 1: square pixels. */
 - (void)setAspect:(int)aspect
@@ -881,7 +930,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 {
     if (needsRestart) {
         if (o2session_restart(_session) != 0)
-            [self alert:@"Could not start" text:[self lastError]];
+            [self reportRefusal:[self lastError] title:@"Could not start"];
         else
             [self showToast:@"Settings applied: the console was power-cycled."];
     }
@@ -897,7 +946,12 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     (void)timer;
     static char buf[128 * 1024];
     const int n = o2session_fujinet_copy_log(_session, buf, sizeof buf);
-    NSString *text = n > 0 ? [NSString stringWithUTF8String:buf] : nil;
+    NSString *text = nil;
+    if (n > 0) {
+        /* UTF-8, or failing that Latin-1: one stray byte must not blank it */
+        text = [[NSString alloc] initWithBytes:buf length:(NSUInteger)n encoding:NSUTF8StringEncoding];
+        if (!text) text = [[NSString alloc] initWithBytes:buf length:(NSUInteger)n encoding:NSISOLatin1StringEncoding];
+    }
     NSString *shown = text ?: @"(no FujiNet output yet)";
     /* nothing new: leave the text, and the reader's place in it, alone */
     if ([_logView.string isEqualToString:shown]) return;
@@ -908,12 +962,19 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if (atEnd) [_logView scrollRangeToVisible:NSMakeRange(_logView.string.length, 0)];
 }
 
-- (void)startLogTimer
+/* Running while the log window can be seen; one refresh when it starts. */
+- (void)updateLogTimer
 {
-    if (_logTimer) return;
-    _logTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
-                                               selector:@selector(refreshLog:) userInfo:nil repeats:YES];
-    _logTimer.tolerance = 0.5;
+    const BOOL want = [self windowCanBeSeen:_logWindow];
+    if (want && !_logTimer) {
+        _logTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
+                                                   selector:@selector(refreshLog:) userInfo:nil repeats:YES];
+        _logTimer.tolerance = 0.5;
+        [self refreshLog:nil];
+    } else if (!want && _logTimer) {
+        [_logTimer invalidate];
+        _logTimer = nil;
+    }
 }
 
 - (void)windowWillClose:(NSNotification *)note
@@ -921,6 +982,10 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if (note.object == _logWindow) {
         [_logTimer invalidate];
         _logTimer = nil;
+    } else if (note.object == _window) {
+        /* the machine's window is the app: with the debugger or Settings
+         * still open, "the last window closed" would never come */
+        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
     }
 }
 
@@ -933,8 +998,8 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     }
     if (_logWindow) {
         [_logWindow makeKeyAndOrderFront:nil];
-        [self startLogTimer];
         [self refreshLog:nil];
+        [self updateLogTimer];
         return;
     }
 
@@ -961,9 +1026,9 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     _logWindow.contentView = scroll;
     [_logWindow center];
 
-    [self startLogTimer];
     [self refreshLog:nil];
     [_logWindow makeKeyAndOrderFront:nil];
+    [self updateLogTimer];
 }
 
 - (void)openWebUI:(id)sender

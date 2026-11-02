@@ -406,7 +406,7 @@ static BOOL parseHex(NSString *text, long *out)
 
     _regAddr = O2Field(@"$A0", 70, self, @selector(writeRegister:));
     _regVal = O2Field(@"$00", 60, self, @selector(writeRegister:));
-    _regNote = O2Note(@"Click a line, edit the value, Return writes it (while stopped)");
+    _regNote = O2Note(@"Click a line, edit the value, Return writes it (stop the machine first: a running program may write it again)");
     _regNote.lineBreakMode = NSLineBreakByTruncatingTail;
     NSStackView *edit = O2HStack(@[O2Label(@"Register"), _regAddr, O2Label(@"value"), _regVal,
                                    O2Button(@"Write", self, @selector(writeRegister:))]);
@@ -727,16 +727,12 @@ static const char *charState(const i8244_char_info *c)
     _regVal.stringValue = [NSString stringWithFormat:@"$%02X", _snap.regs[line]];
 }
 
-/* A register changes only while the machine is stopped: running, the next
- * instruction would overwrite it before anyone saw the edit land. */
+/* The engine takes the write running or stopped; a running program may
+ * simply write the register again, so the hint says to stop first. */
 - (void)writeRegister:(id)sender
 {
     (void)sender;
     long off = 0, val = 0;
-    if (!o2debug_is_stopped(_dbg)) {
-        _regNote.stringValue = @"Stop the machine (F5) to write a register";
-        return;
-    }
     if (!parseHex(_regAddr.stringValue, &off) || off < 0 || off > 0xff || !parseHex(_regVal.stringValue, &val)) {
         _regNote.stringValue = @"Needs a register $00-$FF and a value (hex)";
         return;

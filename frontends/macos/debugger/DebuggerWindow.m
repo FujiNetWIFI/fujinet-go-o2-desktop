@@ -666,7 +666,7 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
     const BOOL exec = type == 0;
     [_bpSpace removeAllItems];
     [_bpSpace addItemsWithTitles:port ? @[@"BUS", @"P1", @"P2"]
-                                      : @[@"Program", @"External data", @"Internal RAM"]];
+                                      : @[@"Program", @"External data", @"Internal RAM", @"8244 registers"]];
     _bpSpace.enabled = !exec;
     _bpRange.enabled = !port;
     _bpRange.placeholderString = port ? @"(a port has no address)"
@@ -1044,8 +1044,10 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
         start = [self resolveAddr:ends[0]];
         end = ends.count > 1 ? [self resolveAddr:ends[1]] : start;
         if (exec) space = O2_SPACE_PROG;
-        /* program space is 12 bits, external data 8, internal RAM 6 */
-        const int limit = space == O2_SPACE_IRAM ? 0x3f : (space == O2_SPACE_XDATA ? 0xff : 0xfff);
+        /* program space is 12 bits, external data and the 8244's registers 8,
+         * internal RAM 6 */
+        const int limit = space == O2_SPACE_IRAM ? 0x3f
+                        : (space == O2_SPACE_XDATA || space == O2_SPACE_VDC ? 0xff : 0xfff);
         if (start < 0 || end < 0 || end < start || end > limit) {
             [self appendPrompt:[NSString stringWithFormat:@"breakpoint: bad address %@ (up to $%X here)\n", range, limit]];
             _status.stringValue = [NSString stringWithFormat:@"Bad address: %@", range];
@@ -1298,7 +1300,7 @@ static void setField(NSTextField *f, NSString *text)
             { O2DEBUG_BP_EXEC, "exec" }, { O2DEBUG_BP_READ, "read" }, { O2DEBUG_BP_WRITE, "write" },
             { O2DEBUG_BP_IN, "in" }, { O2DEBUG_BP_OUT, "out" },
         };
-        static const char *const spaces[3] = { "program", "xdata", "iram" };
+        static const char *const spaces[4] = { "program", "xdata", "iram", "vdc" };
         static const char *const ports[3] = { "BUS", "P1", "P2" };
         NSMutableString *what = [NSMutableString stringWithFormat:@"#%-3d ", bps[i].id];
         BOOL first = YES;
@@ -1309,9 +1311,9 @@ static void setField(NSTextField *f, NSString *text)
             }
         const BOOL port = (bps[i].type & (O2DEBUG_BP_IN | O2DEBUG_BP_OUT)) != 0;
         const BOOL exec = (bps[i].type & O2DEBUG_BP_EXEC) != 0;
-        const int sp = bps[i].space >= 0 && bps[i].space < 3 ? bps[i].space : 0;
+        const int sp = bps[i].space >= 0 && bps[i].space < 4 ? bps[i].space : 0;
         if (port) {
-            [what appendFormat:@"  port %s", ports[sp]];
+            [what appendFormat:@"  port %s", ports[sp < 3 ? sp : 0]];
         } else {
             [what appendFormat:@"  %s $%03X", exec ? "program" : spaces[sp], bps[i].start];
             if (bps[i].end != bps[i].start) [what appendFormat:@"-$%03X", bps[i].end];

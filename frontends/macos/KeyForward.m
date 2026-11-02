@@ -46,20 +46,40 @@ uint32_t O2KeysymFromEvent(NSEvent *event)
     return 0;
 }
 
+/* The device-dependent bits of an event's modifier flags, one per side (IOKit's
+ * NX_DEVICE*KEYMASK): the pair's own flag stays set while either side is held,
+ * so a release of one with the other down would read as a press. */
+#define O2_DEV_LCTL   0x00000001UL
+#define O2_DEV_LSHIFT 0x00000002UL
+#define O2_DEV_RSHIFT 0x00000004UL
+#define O2_DEV_LALT   0x00000020UL
+#define O2_DEV_RALT   0x00000040UL
+#define O2_DEV_RCTL   0x00002000UL
+#define O2_DEV_ANY    (O2_DEV_LCTL | O2_DEV_LSHIFT | O2_DEV_RSHIFT | O2_DEV_LALT | O2_DEV_RALT | O2_DEV_RCTL)
+
+/* Whether a modifier key is down: its group flag is set and, when the event
+ * carries the per-side bits (a synthetic one may not), its own bit is. */
+static int modifierDown(NSUInteger flags, NSUInteger group, NSUInteger side)
+{
+    if (!(flags & group)) return 0;
+    if (!(flags & O2_DEV_ANY)) return 1;
+    return (flags & side) != 0;
+}
+
 /* Modifier keys arrive as flagsChanged, not keyDown/keyUp. The key code
- * says which key; the corresponding flag says whether it went down. */
+ * says which key; its flag says whether it went down. */
 uint32_t O2KeysymFromFlagsChange(NSEvent *event, int *down)
 {
-    const NSEventModifierFlags f = [event modifierFlags];
+    const NSUInteger f = (NSUInteger)[event modifierFlags];
     switch ([event keyCode]) {
-    case kVK_Shift:        *down = (f & NSEventModifierFlagShift) != 0;   return O2_KEYSYM_LSHIFT;
-    case kVK_RightShift:   *down = (f & NSEventModifierFlagShift) != 0;   return O2_KEYSYM_RSHIFT;
-    case kVK_Control:      *down = (f & NSEventModifierFlagControl) != 0; return O2_KEYSYM_LCTRL;
-    case kVK_RightControl: *down = (f & NSEventModifierFlagControl) != 0; return O2_KEYSYM_RCTRL;
+    case kVK_Shift:        *down = modifierDown(f, NSEventModifierFlagShift, O2_DEV_LSHIFT);   return O2_KEYSYM_LSHIFT;
+    case kVK_RightShift:   *down = modifierDown(f, NSEventModifierFlagShift, O2_DEV_RSHIFT);   return O2_KEYSYM_RSHIFT;
+    case kVK_Control:      *down = modifierDown(f, NSEventModifierFlagControl, O2_DEV_LCTL);   return O2_KEYSYM_LCTRL;
+    case kVK_RightControl: *down = modifierDown(f, NSEventModifierFlagControl, O2_DEV_RCTL);   return O2_KEYSYM_RCTRL;
     /* Option is where a Mac keyboard puts the key a PC calls Alt; a binding
      * can sit on it like on Shift and Control. */
-    case kVK_Option:       *down = (f & NSEventModifierFlagOption) != 0;  return O2_KEYSYM_LALT;
-    case kVK_RightOption:  *down = (f & NSEventModifierFlagOption) != 0;  return O2_KEYSYM_RALT;
+    case kVK_Option:       *down = modifierDown(f, NSEventModifierFlagOption, O2_DEV_LALT);   return O2_KEYSYM_LALT;
+    case kVK_RightOption:  *down = modifierDown(f, NSEventModifierFlagOption, O2_DEV_RALT);   return O2_KEYSYM_RALT;
     default: *down = 0; return 0;
     }
 }
