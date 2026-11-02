@@ -29,6 +29,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -65,6 +66,19 @@ static int wait_stopped(o2debug *d, int want, int timeout_ms)
         if (!!o2debug_is_stopped(d) == want) return 1;
         sleep_ms(2); waited += 2;
     }
+    return 0;
+}
+
+/* Sprite 0 is on the frame and has something to draw */
+static int sprite0_shown(const i8244_snapshot *s)
+{
+    int j;
+
+    if (!s->sprites[0].visible)
+        return 0;
+    for (j = 0; j < 8; j++)
+        if (s->sprites[0].shape[j])
+            return 1;
     return 0;
 }
 
@@ -124,7 +138,7 @@ static int find_line(const o2debug_line *l, int n, const char *prefix)
 /* ---- a stand-in FujiNet on loopback (POSIX) ----------------------------------- */
 
 #ifndef _WIN32
-typedef struct { int listen_fd, fd, frames, port; } fake_fujinet;
+typedef struct { int listen_fd, fd, frames, port; atomic_int stop; } fake_fujinet;
 
 /* A SLIP-framed FujiBus ACK from the FUJI device with one payload byte. */
 static size_t ack_frame(uint8_t *out)
@@ -143,24 +157,34 @@ static size_t ack_frame(uint8_t *out)
     return o;
 }
 
-/* Answers every request frame with an ACK until the console hangs up. */
+/* Answers every request frame with an ACK until the console hangs up, then
+ * waits for the next console (the test power-cycles the machine) until told to
+ * stop. */
 static void *fake_main(void *arg)
 {
     fake_fujinet *f = arg;
     uint8_t c, reply[16];
-    int ends = 0;
 
-    f->fd = accept(f->listen_fd, NULL, NULL);
-    if (f->fd < 0) return NULL;
-    while (recv(f->fd, &c, 1, 0) == 1) {
-        if (c != 0xC0) continue;
-        if (++ends == 2) {          /* a frame: leading and trailing delimiter */
-            send(f->fd, reply, ack_frame(reply), 0);
-            f->frames++;
-            ends = 0;
+    for (;;) {
+        int ends = 0;
+
+        f->fd = accept(f->listen_fd, NULL, NULL);
+        if (f->fd < 0)
+            break;
+        if (atomic_load(&f->stop)) {
+            close(f->fd);
+            break;
         }
+        while (recv(f->fd, &c, 1, 0) == 1) {
+            if (c != 0xC0) continue;
+            if (++ends == 2) {          /* a frame: leading and trailing delimiter */
+                send(f->fd, reply, ack_frame(reply), 0);
+                f->frames++;
+                ends = 0;
+            }
+        }
+        close(f->fd);
     }
-    close(f->fd);
     return NULL;
 }
 #endif
@@ -436,17 +460,29 @@ int main(void)
     memset(&ho, 0, sizeof ho);
     ho.machine = O2_MACHINE_ODYSSEY2;
     ho.boip_hostport = boip[0] ? boip : NULL;
-    if (o2_host_start(&ho) != 0) {
-        printf("FAIL: the host does not start: %s\n", o2_host_last_error());
-        return 1;
-    }
-    o2debug_power_up(d);
-    check(wait_stopped(d, 1, 3000), "the new machine stops in the debugger at once");
-    c = cpu(d);
     /* The host's thread starts running as soon as o2_host_start returns, and the
      * hook goes in a moment later: on a slow or loaded machine the console may
-     * have run some instructions first. Say so, and carry on from the reset
-     * vector (what is skipped is the boot-time part). */
+     * have run some instructions first. A CPU caught inside an interrupt cannot
+     * be put back on the reset vector (it takes no more interrupts and CONFIG
+     * waits for one), so power cycle until the hook is first. */
+    for (i = 0; i < 8; i++) {
+        if (o2_host_start(&ho) != 0) {
+            printf("FAIL: the host does not start: %s\n", o2_host_last_error());
+            return 1;
+        }
+        o2debug_power_up(d);
+        if (!wait_stopped(d, 1, 3000))
+            break;
+        c = cpu(d);
+        if (c.pc == 0 && c.instructions == 0)
+            break;
+        o2debug_power_down(d);
+        o2_host_stop();
+    }
+    check(wait_stopped(d, 1, 3000), "the new machine stops in the debugger at once");
+    c = cpu(d);
+    /* Eight tries and still late: say so, and carry on from the reset vector
+     * (what is skipped is the boot-time part). */
     fresh = c.pc == 0 && c.instructions == 0;
     if (!fresh) {
         printf("note: the machine ran before the hook went in (pc %03X, %llu instructions): "
@@ -839,14 +875,18 @@ int main(void)
     {
         i8244_snapshot s;
         char name[64], text[200];
-        int vis = -1, hit_kind = -1, hit_index = -1, bx = 0, by = 0, bw = 0, bh = 0;
+        int vis = -1, hit_kind = -1, hit_index = -1, bx = 0, by = 0, bw = 0, bh = 0, shown = 0;
         o2debug_hit hits[16];
 
         o2debug_vdc_get(d, &s);
-        /* CONFIG switches the foreground off while a band rewrites the objects,
-         * and where the machine stopped depends on how fast the host ran: step
-         * on to a moment the foreground is on, which is most of them */
-        for (int guard = 0; guard < 5000 && !s.fg_en; guard++) {
+        /* CONFIG switches the foreground off while a band rewrites the objects
+         * and parks its sprites, and where the machine stopped depends on how
+         * fast the host ran: step on, a frame is some thousands of steps, to a
+         * moment the foreground is on and sprite 0 is shown */
+        for (long guard = 0; guard < 3000000L; guard++) {
+            shown = s.fg_en && sprite0_shown(&s);
+            if (shown)
+                break;
             o2debug_step(d);
             o2debug_vdc_get(d, &s);
         }
@@ -912,8 +952,7 @@ int main(void)
             check(uniform, "the background layer alone is one colour");
             for (i = 0; i < 360 * 243; i++)
                 if (bg_only[i] != with_sprites[i]) differ = 1;
-            if (s.sprites[0].visible)
-                check(differ, "a visible sprite is drawn on the sprite layer");
+            check(shown && differ, "a visible sprite is drawn on the sprite layer");
             check(o2debug_vdc_view(d, O2DEBUG_VDC_RENDER, I8244_L_ALL, I8244_F_BOXES | I8244_F_COLLISION | I8244_F_OVERLAP,
                                    1, img, sizeof img / sizeof img[0], &w, &h) && w == 360, "RENDER with every overlay");
         }
@@ -1367,17 +1406,17 @@ int main(void)
     o2debug_free(d);
 #ifndef _WIN32
     if (fake_up) {
-        if (fake.fd <= 0) {         /* never dialled: let its accept() go */
-            struct sockaddr_in a;
-            int s = socket(AF_INET, SOCK_STREAM, 0);
-            memset(&a, 0, sizeof a);
-            a.sin_family = AF_INET;
-            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            a.sin_port = htons((unsigned short)fake.port);
-            if (s >= 0) {
-                if (connect(s, (struct sockaddr *)&a, sizeof a) == 0) close(s);
-                else close(s);
-            }
+        struct sockaddr_in a;
+        int s = socket(AF_INET, SOCK_STREAM, 0);
+
+        atomic_store(&fake.stop, 1);    /* a dial lets its accept() go */
+        memset(&a, 0, sizeof a);
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        a.sin_port = htons((unsigned short)fake.port);
+        if (s >= 0) {
+            connect(s, (struct sockaddr *)&a, sizeof a);
+            close(s);
         }
         pthread_join(fake_th, NULL);
         close(fake.listen_fd);
