@@ -48,3 +48,7 @@ __pycache__/
 /nvram/
 /snap/
 /diff/
+/tools/ab/cfg/
+/tools/ab/nvram/
+/tools/ab/snap/
+/tools/ab/diff/
