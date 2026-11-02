@@ -1013,11 +1013,14 @@ static void on_key_released(GtkEventControllerKey *c, guint keyval,
     on_key(keyval, code, st, FALSE);
 }
 
-/* Only what this window's mouse holds: the main window releases its own. */
+/* Keys typed here went through the main window, so a key held into a focus
+ * change must be let go there too (and the mouse's, here). */
 static void on_focus_leave(GtkEventControllerFocus *c, gpointer d)
 {
     (void)c; (void)d;
     mouse_release();
+    if (g_parent)
+        o2_window_release_keys(O2_WINDOW(g_parent));
     g_swallow_code = 0;     /* its release went elsewhere */
 }
 

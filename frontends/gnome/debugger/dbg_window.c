@@ -1744,7 +1744,7 @@ static GtkWidget *build_breaks(DbgWin *w)
     GtkWidget *add, *clear;
     static const char *const types[] = { "Execute", "Read", "Write", "Read/Write",
                                          "Port In", "Port Out", NULL };
-    static const char *const spaces[] = { "Program", "External data", "Internal RAM", NULL };
+    static const char *const spaces[] = { "Program", "External data", "Internal RAM", "8244 registers", NULL };
     static const char *const ports[] = { "P1", "P2", "BUS", NULL };
 
     w->bp_list = GTK_LIST_BOX(gtk_list_box_new());

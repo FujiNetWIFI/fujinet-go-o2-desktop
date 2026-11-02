@@ -36,6 +36,7 @@ typedef struct {
     o2session *session;
     void (*restart)(O2Window *window);
     gboolean dirty;
+    gboolean syncing;           /* a row is being set back: not a change */
     AdwDialog *dialog;
     GtkWidget *pad_group;
     GtkWidget *pad_rows[MAX_PAD_ROWS + 1];
@@ -186,12 +187,11 @@ static AdwPreferencesPage *build_roms_page(PrefsState *state)
     /* the buttons and the folder, first */
     group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
     adw_preferences_group_set_title(group, "Import");
-    adw_preferences_group_set_description(group,
-        "The console's BIOS, the video chips' character sets and The Voice's speech "
-        "ROMs are not part of the app. Import your own: single files, a zip "
-        "(MAME's videopac.zip, i8244.zip or videopacp.zip work) or a folder; each is "
-        "recognised by its size and checksum, whatever it is called.");
-    box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    row = info_row("Import ROMs",
+        "Your own copies: single files, a zip (MAME's videopac.zip, i8244.zip or "
+        "videopacp.zip work) or a folder. Each is recognised by its size and "
+        "checksum, whatever it is called.");
+    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     files = gtk_button_new_with_label("Import BIOS\xe2\x80\xa6");
     folder = gtk_button_new_with_label("Import from a Folder\xe2\x80\xa6");
     gtk_widget_add_css_class(files, "suggested-action");
@@ -201,7 +201,8 @@ static AdwPreferencesPage *build_roms_page(PrefsState *state)
     gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(box), files);
     gtk_box_append(GTK_BOX(box), folder);
-    adw_preferences_group_set_header_suffix(group, box);
+    adw_action_row_add_suffix(ADW_ACTION_ROW(row), box);
+    adw_preferences_group_add(group, row);
     row = info_row("ROM folder", o2session_roms_path(state->session));
     adw_action_row_set_subtitle_selectable(ADW_ACTION_ROW(row), TRUE);
     open = gtk_button_new_with_label("Open");
@@ -248,6 +249,19 @@ static void combo_changed(GObject *row, GParamSpec *pspec, gpointer user_data)
     RowBinding *b = user_data;
     int sel = (int)adw_combo_row_get_selected(ADW_COMBO_ROW(row));
     (void)pspec;
+    if (b->state->syncing)
+        return;
+    if (b->kind == ROW_MACHINE && sel == O2_MACHINE_VIDEOPAC_PLUS &&
+        !o2session_have_bios(b->state->session, sel)) {
+        /* it would not start: say why and keep the console it was */
+        adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(b->state->dialog),
+            adw_toast_new("The Videopac+ G7400 needs its BIOS: import it first (ROMs page)"));
+        b->state->syncing = TRUE;
+        adw_combo_row_set_selected(ADW_COMBO_ROW(row),
+            (guint)o2session_get_int(b->state->session, b->key, b->def));
+        b->state->syncing = FALSE;
+        return;
+    }
     if (b->kind == ROW_ASPECT) {
         o2session_set_int(b->state->session, b->key, sel);
         o2_window_apply_aspect(b->state->window, sel);
@@ -494,11 +508,11 @@ void o2_prefs_show(O2Window *parent, o2session *session,
     /* ---- the console: applied by a power cycle when the dialog closes */
     group = new_group(machine, "Console",
         "Applied when Preferences closes, with a power cycle: an opened "
-        "cartridge boots again");
+        "cartridge boots again. The Odyssey 2 is NTSC with the 8244; the Videopac "
+        "G7000 is PAL with the 8245 on the same BIOS; the Videopac+ G7400 adds a "
+        "text chip, its own BIOS and a bigger keyboard.");
     adw_preferences_group_add(group,
-        combo_row(state, "Machine", "The Odyssey 2 is NTSC with the 8244; the Videopac G7000 "
-                  "is PAL with the 8245 on the same BIOS; the Videopac+ G7400 adds a text "
-                  "chip, its own BIOS and a bigger keyboard",
+        combo_row(state, "Machine", NULL,
                   "machine", O2_MACHINE_ODYSSEY2, machine_name, ROW_MACHINE));
     state->bios_row = info_row("BIOS", NULL);
     adw_preferences_group_add(group, state->bios_row);

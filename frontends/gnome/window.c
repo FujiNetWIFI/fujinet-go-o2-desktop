@@ -285,6 +285,11 @@ static void show_message(GtkWidget *over, const char *heading, const char *body)
     adw_dialog_present(dlg, over);
 }
 
+void o2_window_message(O2Window *self, const char *heading, const char *body)
+{
+    show_message(GTK_WIDGET(self), heading, body);
+}
+
 static GtkFileDialog *file_dialog(const char *title, const char *filter_name,
                                   const char *const *suffixes, const char *folder)
 {
@@ -823,7 +828,8 @@ static void action_fujinet_log(GSimpleAction *a, GVariant *p, gpointer user_data
 static void restart_session(O2Window *self)
 {
     if (o2session_restart(self->session) != 0) {
-        o2_window_toast(self, o2session_last_error(self->session));
+        show_message(GTK_WIDGET(self), "The Console Did Not Start",
+                     o2session_last_error(self->session));
         return;
     }
     o2_window_toast(self, "Machine options applied (power cycled)");

@@ -18,6 +18,9 @@ GtkWidget *o2_window_new(AdwApplication *app, o2session *session);
 /* main.c: the icon name to use (the installed id, or the in-tree art). */
 const char *o2_icon_name(void);
 void o2_window_toast(O2Window *self, const char *text);
+/* A message the user has to read (a toast would vanish before the reason
+ * was read): an alert with an OK button. */
+void o2_window_message(O2Window *self, const char *heading, const char *body);
 /* The display's shape: 0 = the television's 4:3, 1 = square pixels. */
 void o2_window_apply_aspect(O2Window *self, int aspect);
 /* Smooth (bilinear) scaling of the picture, or the sharp pixels. */

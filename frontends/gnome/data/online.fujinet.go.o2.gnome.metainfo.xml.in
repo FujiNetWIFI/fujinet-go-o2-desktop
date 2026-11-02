@@ -4,41 +4,48 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>FujiNet Go Odyssey 2 (GNOME)</name>
-  <summary>Magnavox Odyssey 2 with built-in FujiNet</summary>
+  <summary>Odyssey 2 and Videopac with FujiNet</summary>
   <description>
     <p>
-      A self-contained Magnavox Odyssey 2, the 1977 COSMAC 1802 console, with a
-      FujiNet built in: browse a network host from the console, boot games
-      and programs over the network, and let a FujiNet program keep talking
-      to the network, all in one application.
+      A self-contained Magnavox Odyssey 2 and Philips Videopac, the 1978
+      Intel 8048 consoles, with a FujiNet built in: browse a network host from
+      the console, boot games and programs over the network, and let a FujiNet
+      program keep talking to the network, all in one application.
     </p>
     <p>
       FujiNet's CONFIG program is built in and starts at power-on, exactly as
-      on the FujiNet Odyssey 2 cartridge. Local .st2 and .bin cartridge images
-      can be opened in its place, or imported to FujiNet's SD folder with
-      Import Cartridge to SD and booted from CONFIG. CLEAR restarts whatever
-      the cartridge is serving, and Reset to CONFIG ejects the cartridge and
-      brings CONFIG back.
+      on the FujiNet Odyssey 2 cartridge. Local cartridge images can be opened
+      in its place, or imported to FujiNet's SD folder with Import Cartridge to
+      SD and booted from CONFIG. The console's RESET key restarts whatever the
+      cartridge is serving, and Reset to CONFIG ejects the cartridge and brings
+      CONFIG back. The Odyssey 2 (NTSC), the Videopac G7000 (PAL) and the
+      Videopac+ G7400 (with its text chip) are all here, with The Voice in
+      front of the cartridge if you like.
     </p>
     <p>
-      The emulator is MAME's Magnavox Odyssey 2, with its CDP1802 processor and
-      CDP1861 video chip, transposed to C, with the FujiNet cartridge running
-      the real cartridge firmware's own protocol and page-mapping sources, so
-      it behaves as the hardware does.
+      The emulator is MAME's Odyssey 2 and Videopac, with the 8048, the 8244
+      and 8245 video chips, the G7400's EF9340 and The Voice's speech chip,
+      transposed to C, with the FujiNet cartridge running the real cartridge
+      firmware's own protocol and page-mapping sources, so it behaves as the
+      hardware does.
     </p>
     <p>
-      Both ten-key keypads are on the keyboard and on screen, gamepads are
-      picked up as they are plugged in and out, and every key can be
-      remapped to a key or a gamepad button. A native debugger has a command
-      prompt, the 1802's registers and the console RAM, disassembly with
-      breakpoints, the 1861's raster, the keypads and I/O ports, and the
-      FujiNet cartridge with its page map and text screen.
+      The Controllers window draws the console's membrane keyboard and both
+      joysticks; click and hold to press, and Map rebinds any key or stick
+      control to a key or a gamepad button. Gamepads are picked up as they are
+      plugged in and out. A native debugger has a command prompt, the 8048's
+      registers and RAM, disassembly with breakpoints, a Video tab that shows
+      everything the 8244 knows (the rendered display with its layers, every
+      sprite and character with its position and bitmap, the grid, all 256
+      registers, collisions and sound), the EF9340, the I/O ports and keyboard
+      matrix, and the FujiNet cartridge with every FujiBus packet on its link.
     </p>
     <p>
       Nothing copyrighted is included. CONFIG and FujiNet programs run on the
-      application's own stand-in for the BIOS; Odyssey 2 games are written in
-      the BIOS's own byte-code, so they need your own copy of the RCA BIOS,
-      added with Import BIOS.
+      application's own stand-in for the BIOS; Odyssey 2 games call the real
+      BIOS, and every machine needs the video chip's character set to show
+      text, so you add your own copies with Import BIOS, from files, a zip or a
+      folder.
     </p>
   </description>
   <launchable type="desktop-id">online.fujinet.go.o2.gnome.desktop</launchable>
@@ -59,79 +66,30 @@
   <screenshots>
     <screenshot type="default">
       <caption>The FujiNet CONFIG client running on the console</caption>
-      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/1_running_config.png</image>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.1.0/data/screenshots/1_running_config.png</image>
     </screenshot>
     <screenshot>
-      <caption>The built-in debugger, showing FujiBus traffic</caption>
-      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/2_debugger.png</image>
+      <caption>The built-in debugger's Video tab, showing the 8244's objects</caption>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.1.0/data/screenshots/2_debugger.png</image>
     </screenshot>
     <screenshot>
-      <caption>Both keypads on screen</caption>
-      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/3_keypad.png</image>
+      <caption>The Controllers window: the membrane keyboard and both joysticks</caption>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.1.0/data/screenshots/3_controllers.png</image>
     </screenshot>
   </screenshots>
   <releases>
     <!-- The CURRENT release templates its version from @PROJECT_VERSION@, so
          it cannot disagree with the tree; past releases are literal. The
          release job checks that this first entry is still a template. -->
-    <release version="@PROJECT_VERSION@" date="2026-11-01">
+    <release version="@PROJECT_VERSION@" date="2026-11-02">
       <description>
         <p>
-          Lower CPU use: the picture is drawn only when the emulator has a new frame, and the display stops updating while the window is hidden. The built-in FujiNet wakes about a tenth as often when nothing is happening. Needs GTK 4.16 or newer.
-        </p>
-      </description>
-    </release>
-    <release version="0.3.1" date="2026-11-01">
-      <description>
-        <p>
-          No GNOME changes; version kept in step with the KDE build, which fixes a see-through video area under KWin.
-        </p>
-      </description>
-    </release>
-    <release version="0.3.0" date="2026-10-29">
-      <description>
-        <p>
-          New: use an external FujiNet. A switch in Preferences makes the app connect to another FujiNet instance at a host:port you enter (for example 127.0.0.1:11520) instead of starting the built-in one.
-        </p>
-      </description>
-    </release>
-    <release version="0.2.2" date="2026-10-27">
-      <description>
-        <p>
-          The Flatpak bundles now name Flathub as their runtime repository, so a downloaded bundle can fetch the GNOME or KDE runtime on a machine that has not set up Flathub.
-        </p>
-      </description>
-    </release>
-    <release version="0.2.1" date="2026-10-27">
-      <description>
-        <p>
-          The Flatpak builds on the GNOME 51 runtime. The software-centre
-          listing now credits FujiNet as developer, declares the app icon,
-          and shows a full set of screenshots for this frontend.
-        </p>
-      </description>
-    </release>
-    <release version="0.2.0" date="2026-10-25">
-      <description>
-        <p>
-          The FujiNet cartridge speaks protocol 2: images up to 48K with a
-          bank window, pages the program can write and copy, and a graphics
-          layer (pictures at any pixel, rectangles, 16 sprites, a shaking or
-          flashing screen) drawn even while FujiNet is busy. M.U.L.E. boots
-          and plays. Quitting while a network app was mid-request no longer
-          crashes.
-        </p>
-      </description>
-    </release>
-    <release version="0.1.0" date="2026-10-20">
-      <description>
-        <p>
-          First release: the Magnavox Odyssey 2 transposed from MAME with the
-          FujiNet Odyssey 2 cartridge and an in-process FujiNet; native
-          GNOME, KDE, macOS and Windows frontends; both keypads on screen,
-          hotplugged gamepads, an optional BIOS import for games, CLEAR and
-          Reset to CONFIG, and a native debugger with a FujiNet tab showing
-          every FujiBus packet.
+          First release: the Magnavox Odyssey 2, the Philips Videopac G7000
+          and the Videopac+ G7400 transposed from MAME, with the FujiNet
+          Odyssey 2 cartridge and an in-process FujiNet; a Controllers window
+          with the console's keyboard and both joysticks, hotplugged gamepads,
+          Import BIOS from files, a zip or a folder, and a native debugger with
+          a full 8244 video tab and a FujiNet tab showing every FujiBus packet.
         </p>
       </description>
     </release>

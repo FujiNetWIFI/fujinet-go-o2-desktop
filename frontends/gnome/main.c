@@ -86,9 +86,14 @@ static void on_activate(AdwApplication *app, gpointer user_data)
     g_signal_connect(win, "close-request", G_CALLBACK(on_main_close), app);
 
     o2session_default_opts(g_session, &opts);
-    if (o2session_start(g_session, &opts) != 0)
-        g_warning("%s", o2session_last_error(g_session));
     gtk_window_present(GTK_WINDOW(win));
+    /* a machine that cannot start (the Videopac+ G7400 chosen, its BIOS gone)
+     * says why; Preferences is still there to choose another */
+    if (o2session_start(g_session, &opts) != 0) {
+        g_warning("%s", o2session_last_error(g_session));
+        o2_window_message(O2_WINDOW(win), "The Console Did Not Start",
+                          o2session_last_error(g_session));
+    }
 
     /* A file named on the command line takes the drag-and-drop path: a BIOS
      * is imported, a cartridge is opened (and remembered, as from the menu),

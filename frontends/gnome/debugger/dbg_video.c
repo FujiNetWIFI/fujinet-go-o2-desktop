@@ -63,6 +63,13 @@ typedef struct {
     gboolean have_sig;
 } ObjRow;
 
+/* A fixed-size image drawn with cairo (image_area_new below). */
+typedef struct {
+    GtkWidget *widget;
+    uint32_t *px;
+    int w, h;
+} ImageArea;
+
 struct DbgVideo {
     o2session *session;
     o2debug *dbg;
@@ -107,7 +114,7 @@ struct DbgVideo {
     GtkWidget *shift_area;
 
     /* sheets */
-    GtkPicture *sheet_font, *sheet_shapes, *sheet_palette;
+    ImageArea *sheet_font, *sheet_shapes, *sheet_palette;
 };
 
 /* ---- images ------------------------------------------------------------------- */
@@ -122,6 +129,57 @@ static void set_picture(GtkPicture *pic, const uint32_t *px, int w, int h)
     g_bytes_unref(bytes);
 }
 
+/* A fixed-size image drawn with cairo, for the pictures whose size varies:
+ * a GtkPicture asked for its height at a width answers with the aspect
+ * ratio's, which stretches it when its column is wider than the image. A
+ * drawing area is exactly the size it is given. */
+
+static void image_area_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer ud)
+{
+    ImageArea *ia = ud;
+    cairo_surface_t *surf;
+    (void)area; (void)width; (void)height;
+    if (!ia->px) return;
+    surf = cairo_image_surface_create_for_data((unsigned char *)ia->px, CAIRO_FORMAT_RGB24,
+                                               ia->w, ia->h, ia->w * 4);
+    cairo_set_source_surface(cr, surf, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
+    cairo_paint(cr);
+    cairo_surface_destroy(surf);
+}
+
+static void image_area_free(gpointer p)
+{
+    ImageArea *ia = p;
+    g_free(ia->px);
+    g_free(ia);
+}
+
+static ImageArea *image_area_new(void)
+{
+    ImageArea *ia = g_new0(ImageArea, 1);
+    ia->widget = gtk_drawing_area_new();
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(ia->widget), image_area_draw, ia, NULL);
+    gtk_widget_set_halign(ia->widget, GTK_ALIGN_START);
+    gtk_widget_set_valign(ia->widget, GTK_ALIGN_START);
+    g_object_set_data_full(G_OBJECT(ia->widget), "image-area", ia, image_area_free);
+    return ia;
+}
+
+static void image_area_set(ImageArea *ia, const uint32_t *px, int w, int h)
+{
+    if (ia->w != w || ia->h != h) {
+        g_free(ia->px);
+        ia->px = g_new(uint32_t, (gsize)w * (gsize)h);
+        ia->w = w;
+        ia->h = h;
+        gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(ia->widget), w);
+        gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(ia->widget), h);
+    }
+    memcpy(ia->px, px, (gsize)w * (gsize)h * 4);
+    gtk_widget_queue_draw(ia->widget);
+}
+
 static GtkPicture *new_picture(void)
 {
     GtkPicture *pic = GTK_PICTURE(gtk_picture_new());
@@ -133,8 +191,8 @@ static GtkPicture *new_picture(void)
 
 /* The core's view `kind` into the shared buffer, and onto `pic` when its
  * pixels differ from what `prev` (if any) last showed. */
-static gboolean show_view(DbgVideo *v, GtkPicture *pic, int kind, unsigned layers,
-                          unsigned flags, int scale, gboolean cache)
+static gboolean show_view(DbgVideo *v, GtkPicture *pic, ImageArea *area, int kind,
+                          unsigned layers, unsigned flags, int scale, gboolean cache)
 {
     int w = 0, h = 0;
     if (!o2debug_vdc_view(v->dbg, kind, layers, flags, scale, v->buf, v->cap, &w, &h) ||
@@ -148,7 +206,10 @@ static gboolean show_view(DbgVideo *v, GtkPicture *pic, int kind, unsigned layer
         v->pw = w;
         v->ph = h;
     }
-    set_picture(pic, v->buf, w, h);
+    if (pic)
+        set_picture(pic, v->buf, w, h);
+    else
+        image_area_set(area, v->buf, w, h);
     return TRUE;
 }
 
@@ -221,7 +282,7 @@ static void picture_update(DbgVideo *v)
 
     if (view != VIEW_RENDER)
         flags &= I8244_F_BEAM;       /* the boxes are drawn over it, below */
-    if (show_view(v, v->pic, (int)core_kind, layer_mask(v), flags, SCALE, TRUE) ||
+    if (show_view(v, v->pic, NULL, (int)core_kind, layer_mask(v), flags, SCALE, TRUE) ||
         (flag_mask(v) & I8244_F_BOXES))
         gtk_widget_queue_draw(v->overlay_area);
 }
@@ -693,16 +754,12 @@ static void on_reg_activate(GtkEntry *entry, gpointer ud)
     DbgVideo *v = ud;
     unsigned off = (unsigned)GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "reg"));
     long val;
-    if (!o2debug_is_stopped(v->dbg)) {
-        gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
-        gtk_widget_set_tooltip_text(GTK_WIDGET(entry), "Stop the machine to edit a register");
-        return;
-    }
-    gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
-    gtk_widget_set_tooltip_text(GTK_WIDGET(entry), NULL);
     if (dbg_parse_num(gtk_editable_get_text(GTK_EDITABLE(entry)), &val)) {
+        gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
         o2debug_vdc_write(v->dbg, off, (uint8_t)val);
-        dbg_video_refresh(v, FALSE);
+                dbg_video_refresh(v, FALSE);
+    } else {
+        gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
     }
 }
 
@@ -755,8 +812,9 @@ static GtkWidget *build_regs(DbgVideo *v)
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
     gtk_widget_set_vexpand(scroll, TRUE);
     gtk_box_append(GTK_BOX(outer), dbg_hint("Every register $00-$FF with its name and what it "
-                                            "means now. Enter in a value writes it (the machine "
-                                            "must be stopped).", 40));
+                                            "means now. Enter in a value writes it, with the chip's "
+                                            "own masks; a running program may write it "
+                                            "again.", 40));
     gtk_box_append(GTK_BOX(outer), scroll);
     return dbg_padded(outer);
 }
@@ -940,9 +998,9 @@ static GtkWidget *build_sound(DbgVideo *v)
 
 static void refresh_sheets(DbgVideo *v)
 {
-    show_view(v, v->sheet_font, O2DEBUG_VDC_FONT, 0, 0, 3, FALSE);
-    show_view(v, v->sheet_shapes, O2DEBUG_VDC_SHAPES, 0, 0, 3, FALSE);
-    show_view(v, v->sheet_palette, O2DEBUG_VDC_PALETTE, 0, 0, 2, FALSE);
+    show_view(v, NULL, v->sheet_font, O2DEBUG_VDC_FONT, 0, 0, 3, FALSE);
+    show_view(v, NULL, v->sheet_shapes, O2DEBUG_VDC_SHAPES, 0, 0, 3, FALSE);
+    show_view(v, NULL, v->sheet_palette, O2DEBUG_VDC_PALETTE, 0, 0, 2, FALSE);
 }
 
 static GtkWidget *build_sheets(DbgVideo *v)
@@ -950,16 +1008,16 @@ static GtkWidget *build_sheets(DbgVideo *v)
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkWidget *scroll = gtk_scrolled_window_new();
 
-    v->sheet_font = new_picture();
-    v->sheet_shapes = new_picture();
-    v->sheet_palette = new_picture();
+    v->sheet_font = image_area_new();
+    v->sheet_shapes = image_area_new();
+    v->sheet_palette = image_area_new();
     gtk_box_append(GTK_BOX(box), dbg_heading("Character set: 64 glyphs, the lower 256 bytes "
                                              "(colour bit 0 = 0) above the upper"));
-    gtk_box_append(GTK_BOX(box), GTK_WIDGET(v->sheet_font));
+    gtk_box_append(GTK_BOX(box), v->sheet_font->widget);
     gtk_box_append(GTK_BOX(box), dbg_heading("Sprite shape tables ($80-$9F), in their colours"));
-    gtk_box_append(GTK_BOX(box), GTK_WIDGET(v->sheet_shapes));
+    gtk_box_append(GTK_BOX(box), v->sheet_shapes->widget);
     gtk_box_append(GTK_BOX(box), dbg_heading("Palette: 8 colours (top), the same bright (below)"));
-    gtk_box_append(GTK_BOX(box), GTK_WIDGET(v->sheet_palette));
+    gtk_box_append(GTK_BOX(box), v->sheet_palette->widget);
     dbg_padded(box);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
     return scroll;
@@ -1016,7 +1074,7 @@ DbgVideo *dbg_video_new(o2session *session, o2debug *dbg, GtkWidget **root)
     DbgVideo *v = g_new0(DbgVideo, 1);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *row, *overlay, *layers, *flags;
+    GtkWidget *row, *overlay, *layers, *flags, *lscroll;
     GtkEventController *motion;
     int i;
 
@@ -1094,7 +1152,15 @@ DbgVideo *dbg_video_new(o2session *session, o2debug *dbg, GtkWidget **root)
     gtk_notebook_append_page(v->sections, build_sheets(v), gtk_label_new("Sheets"));
     g_signal_connect(v->sections, "switch-page", G_CALLBACK(on_section_switch), v);
 
-    gtk_box_append(GTK_BOX(box), left);
+    /* the picture cannot shrink, so the column scrolls rather than hold the
+     * window to its height on a small screen */
+    lscroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(lscroll), left);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(lscroll), GTK_POLICY_AUTOMATIC,
+                                   GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_propagate_natural_width(GTK_SCROLLED_WINDOW(lscroll), TRUE);
+    gtk_widget_set_hexpand(lscroll, FALSE);
+    gtk_box_append(GTK_BOX(box), lscroll);
     gtk_box_append(GTK_BOX(box), GTK_WIDGET(v->sections));
     sync_sensitivity(v);
     *root = dbg_padded(box);
@@ -1118,7 +1184,7 @@ struct DbgEf {
     o2debug *dbg;
     GtkWidget *stack;
     GtkTextView *regs_text, *page_text;
-    GtkPicture *pic;
+    ImageArea *image;
     uint32_t *buf, *prev;
     gboolean have_prev;
 };
@@ -1208,7 +1274,7 @@ void dbg_ef_refresh(DbgEf *e)
             if (!e->have_prev || memcmp(e->buf, e->prev, bytes) != 0) {
                 memcpy(e->prev, e->buf, bytes);
                 e->have_prev = TRUE;
-                set_picture(e->pic, e->buf, w, h);
+                image_area_set(e->image, e->buf, w, h);
             }
         }
     }
@@ -1229,12 +1295,13 @@ DbgEf *dbg_ef_new(o2session *session, o2debug *dbg, GtkWidget **root)
     e->prev = g_new0(uint32_t, (size_t)EF9340_VIS_W * EF9340_VIS_H);
 
     regs = dbg_mono_view(&e->regs_text, FALSE);
+    gtk_text_view_set_wrap_mode(e->regs_text, GTK_WRAP_WORD_CHAR);
     gtk_widget_set_size_request(regs, 380, -1);
     page = dbg_mono_view(&e->page_text, FALSE);
     gtk_widget_set_size_request(page, 420, -1);
-    e->pic = new_picture();
+    e->image = image_area_new();
     pscroll = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(pscroll), GTK_WIDGET(e->pic));
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(pscroll), e->image->widget);
     gtk_widget_set_hexpand(pscroll, TRUE);
     gtk_widget_set_vexpand(pscroll, TRUE);
 
