@@ -1,0 +1,64 @@
+# The KDE frontend: plain Qt6 Widgets.
+#
+# Deliberately NOT KDE Frameworks. It picks up Breeze through the platform
+# theme anyway, and staying framework-free keeps this frontend usable outside
+# a KDE session -- and keeps the door open to reusing it elsewhere.
+#
+# Found-or-skipped, like the GNOME one: a machine without Qt6 development
+# packages still builds the core, the tests and the other frontend.
+
+set(CMAKE_AUTOMOC ON)
+
+# Qt 6.7 for QRhiWidget (the GPU display); ShaderTools bakes its shaders.
+find_package(Qt6 6.7 COMPONENTS Widgets GuiPrivate ShaderTools QUIET)
+if(NOT Qt6_FOUND)
+  message(STATUS "kde frontend: Qt6 Widgets not found -- skipping")
+  return()
+endif()
+
+add_executable(fujinet-go-o2-kde
+  main.cpp
+  MainWindow.cpp
+  DisplayWidget.cpp
+  SoftDisplayWidget.cpp
+  FrameFeed.cpp
+  KeyForward.cpp
+  SettingsDialog.cpp
+  FujiNetWindows.cpp
+  keypad/KeypadWindow.cpp
+  debugger/DebuggerWindow.cpp
+)
+target_link_libraries(fujinet-go-o2-kde PRIVATE o2_session Qt6::Widgets Qt6::GuiPrivate)
+# The display's shaders, baked for every backend and embedded as resources.
+qt_add_shaders(fujinet-go-o2-kde "display_shaders"
+  PREFIX "/"
+  FILES shaders/display.vert shaders/display.frag)
+target_compile_options(fujinet-go-o2-kde PRIVATE -Wall -Wextra)
+target_compile_definitions(fujinet-go-o2-kde PRIVATE
+  O2_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/data/icons")
+
+install(TARGETS fujinet-go-o2-kde RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+configure_file(data/online.fujinet.go.o2.kde.desktop.in
+               ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.desktop
+               @ONLY)
+configure_file(data/online.fujinet.go.o2.kde.metainfo.xml.in
+               ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.metainfo.xml
+               @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.metainfo.xml
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+
+find_program(DESKTOP_FILE_VALIDATE desktop-file-validate)
+if(DESKTOP_FILE_VALIDATE)
+  add_test(NAME desktop_file_kde
+           COMMAND ${DESKTOP_FILE_VALIDATE}
+                   ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.desktop)
+endif()
+find_program(APPSTREAMCLI appstreamcli)
+if(APPSTREAMCLI)
+  add_test(NAME metainfo_kde
+           COMMAND ${APPSTREAMCLI} validate --no-net --pedantic
+                   ${CMAKE_CURRENT_BINARY_DIR}/online.fujinet.go.o2.kde.metainfo.xml)
+endif()

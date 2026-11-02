@@ -1,0 +1,163 @@
+fujinet-go-o2-desktop -- milestone log
+===========================================
+
+The plan is the family's (see fujinet-go-adam-desktop/PORTING.md): one C API
+in core/, four native frontends, FujiNet in-process, one shared settings
+store, a native debugger everywhere, no panels visible at startup,
+clone-and-build CI. The core is MAME's Magnavox Odyssey 2 transposed to C, the
+astrocade and SMS siblings' way; the session, debugger and frontends are the
+SMS sibling's. Plan: ~/.claude/plans/build-fujinet-go-desktop-swirling-rabbit.md.
+Nothing below is marked done on "it compiles".
+
+M0  scaffold                                                          [x]
+  [x] root CMakeLists (VERSION 0.1.0, FRONTEND switch, WITH_O2_ROMS OFF,
+      no_embedded_roms registration, icon loop, CPack DEB/RPM/TGZ)
+  [x] cmake/Dependencies.cmake pins fujinet-firmware master (8fa1727b2, #2083);
+      cmake/StageFujiProto.cmake stages pico/o2 + pico/common
+      (v0.2.0: PR #2187's head, 035f09604 -- see M13; now c64971202 = that + the
+      BoIP idle-wait fix, PR #2247, on the tschak909 fork; back to master when merged)
+  [x] tools/fujinet: BoIP 11520, web UI 11521; patch 0001 (default hosts);
+      the post-#1960 transforms (-Werror off when embedded, pyyaml/jinja2
+      pip fallback); every heredoc anchor audited against the pin
+
+M1  CPU                                                               [x]
+  [x] cpu1802.c: MAME's cosmac.cpp state machine, CDP1802 subset
+  [x] dasm1802.c: MAME's cosdasm; dasm test against MAME's own output for
+      all 256 opcodes (dasm_golden.h, from MAME's debugger)
+
+M2  machine                                                           [x]
+  [x] cdp1861.c: MAME's three timers as absolute clocks, time_until_pos
+      transposed, flat 112-pixel bitmap rows
+  [x] machine.c: memory/I-O maps, keypads on EF3/EF4 via the OUT 2 latch,
+      INP 1, Q -> 300 Hz beeper, CLEAR (resets the 1861 on the press)
+  [x] tools/ab/mame_ab.py: BIOS alone with keys, 8 carts (DIRECT, against
+      MAME's FujiNet device), CONFIG: every frame pixel-identical; Lua keys
+      land two frames late in MAME (--key-shift -2)
+  [x] power-on pulses CLEAR (IE=1) unlike MAME (IE=0); --mame-power-on for A/B,
+      with Clear pressed first (MAME's BIOS never takes its interrupt
+      otherwise): 1200/1200 frames, 8 carts + the built-ins
+  [x] beeper: mame_ab.py --wav, every beep within two samples of MAME's
+
+M3  cartridge                                                         [x]
+  [x] fujinet_cart.c from o2_fujinet.cpp; worker thread, poke queue,
+      FN_R_LINK, reconnecting wait_link_ms, busy status
+  [x] fujitcp_host.c (the SMS twin; master's fujitcp.c now has abort too)
+  [x] stub.asm/stub.c: the no-BIOS stand-in; parks on a game, the machine
+      blanks the picture and the session asks for the BIOS
+  [x] tests: stub_boot, cart (loopback FujiNet: push, stage, arm, swap, the
+      trace tap byte-for-byte), cart_seam (pages, peeks, the qualified
+      read of $0000, CLEAR into an armed CONFIG), mame_trace, no_sdl_link
+
+M4  session                                                           [x]
+  [x] o2session.h: keypads + CLEAR targets, Import BIOS (2K / 1K / the
+      four ROMs), use_bios, games refused with no BIOS, needs_bios
+  [x] tests: session, bindings, media, gamepad, gamepad_map, boot_smoke,
+      fujibus_smoke, config_boot (an app and a game booted from the SD
+      host), netboot + netboot_sync (fujitest, fujiboot)
+
+M5  debugger engine                                                   [x]
+  [x] o2debug.h: 1802 registers, SEP/SCRT step over/out, CDP1861 state
+      and views, I/O, cart page map and text engine, AS symbol formats,
+      big-endian {addr}
+  [x] tests: debug, fujitrace
+
+M6  GNOME                                                             [x]
+  [x] GTK4/libadwaita port of the SMS frontend: Console menu, needs-BIOS
+      alert (Import BIOS retries the cartridge), Keypad window (fixed-size
+      floating), Preferences' BIOS line, the debugger's 8 tabs
+  [x] fixed from SMS: on_open's active-window cast (crash on a second
+      launch with a file while the debugger had focus); the 1069 px
+      debugger (disassembly scroll policy)
+  [x] seen under Hyprland on a headless output: CONFIG live, the menu,
+      keypad held (virtual pad) and Map, Preferences, the needs-BIOS
+      alert, a game after import, every debugger tab
+  [ ] not driven: register/RAM/breakpoint entry, Preferences close
+M7  KDE                                                               [x]
+  [x] Qt6 port of the SMS frontend: menus, needs-BIOS alert, Keypad window
+      (fixed-size floating), Preferences' BIOS line, the debugger's 8 tabs
+  [x] seen under Hyprland on a headless output: CONFIG with a live FujiNet,
+      keypad held keys, Preferences before/after Import BIOS, every
+      debugger tab, the needs-BIOS alert, a game after import
+  [ ] not seen: Map mode, menu accelerators, About (no click dispatcher;
+      Hyprland's synthetic keys lose Ctrl for Qt)
+M8  Windows                                                           [x]
+  [x] Win32/GDI port of the SMS frontend; Left Alt (keypad A's 0) as a
+      bound system key, Alt+F4/mnemonics stay Windows'
+  [x] cross-built (mingw-w64), every core test .exe passes under Wine;
+      every window and debugger tab seen under Wine
+  [ ] not driven: file dialogs, drag-and-drop
+M9  macOS (CI only: no Apple toolchain here)                          [x]
+  [x] AppKit port of the SMS frontend; every API name and arity checked
+      against the headers by script
+  [x] builds and tests green on CI (arm64 and x86_64); never run here
+
+M10 packaging + CI                                                    [x]
+  [x] icons: the family mark, inverted, on #C11218
+  [x] flatpak manifests pinned to master (type: git); NSIS installer
+  [x] screenshots (CONFIG live, the debugger's FujiNet tab, the keypad)
+  [x] local: both flatpak manifests build and bundle; CPack DEB and TGZ
+      (KDE, release-like with libfujinet; no rpmbuild here); no BIOS
+      bytes in any binary (no_embedded_roms against a local BIOS, with a
+      negative control)
+  [x] CI green on every workflow (macOS compiled first time; Windows
+      needed eec4b81: a FujiNet-off session no longer dials)
+
+M11 family audit                                                      [x]
+  core and tools against the SMS sibling (names normalised):
+  [x] cart_seam ported (Odyssey 2 seam: pages, peeks, hand-over, CLEAR)
+  [x] sms_drive -> o2_drive (whole app headless, scripted)
+  [x] audio_ab.py -> mame_ab.py --wav (one harness for frames and audio)
+  not adopted, deliberately:
+  - bios_synth: the Sega BIOS socket/paging/snoop; the Odyssey 2 has no
+    BIOS paging, and stub_boot runs a BIOS of the tests' own
+  - vdp_decode, vdp_timing, probe_golden + tools/ab/probes, make_goldens:
+    covered by mame_trace (every CPU and DMA read of the tests' own BIOS,
+    game and CONFIG, cycle-stamped, against MAME's trace) and dasm
+  - abshot.lua: abdump.lua dumps every frame instead of snapshots
+  - patch 0002 (.SMS as ROM media): master already maps .ST2
+  - the firmware's fujitest/fujiboot.trace replays: pico/o2's own
+    host_test/test_cycles replays them against the same staged sources
+  [x] frontends: every SMS file has its counterpart (controllers ->
+      keypad); Pause dropped (the Odyssey 2 has none)
+M12 publish (repo, v0.1.0)                                            [x]
+  [x] FujiNetWIFI/fujinet-go-o2-desktop created, main pushed
+  [x] v0.1.0 tagged (eec4b81), release.yml green, published 2026-10-20:
+      12 assets as SMS's; every shipped binary scanned for BIOS bytes
+
+M13 cart protocol 2 (v0.2.0)                                          [x]
+  [x] pin: fujinet-firmware PR #2187's head (035f09604, on master #2182),
+      since re-pinned to c64971202 (+ BoIP idle-wait fix, PR #2247, fork);
+      a fresh clone fetches the commit itself; flatpak takes GitHub's
+      archive of it (sha256 pinned; the FujiNet version reads 0000000)
+  [x] staging: + fuji_crc.c/h
+  [x] fujinet_cart.c mirrors the MAME device at the pin: own_reg (CONFIG,
+      COPY -> FN_R_COPYDONE), fuji_load on the text engine's display,
+      compose before a frame (inline) / after each service and on idle
+      (worker, 4 ms), the transaction-time idle hook (fujitcp_host.c's
+      read_frame wakes every 2 ms) and the reconnect wait; the CPU thread
+      composes too at each frame's start, try-locking the text engine (a
+      worker blocked on the link left CONFIG unpainted on Windows CI);
+      status: banks; raster view = the shown frame
+  [x] limits: 49,408-byte images (texts, tests); symbols: COPYDONE,
+      PTRLO/PTRHI/POKE/CPSRC/CPDST/CPLEN, FN_BANK
+  [x] tests: cart_seam (bank select, poke stream, COPY, a RECT reaching
+      the next frame); media (42,752-byte banked ST2 plans, 50,000
+      refused); mame_trace CONFIG golden from the protocol-2 MAME
+      (805812 / 1BC6C118D85EF4AF; game golden unchanged)
+  [x] runtime: every heredoc anchor ok on the new base; release_channel
+      at exit (an HTTP channel left open crashed the process on the way
+      out -- since v0.1.0, any N: app; M.U.L.E. polls constantly)
+  [x] mame_ab.py --direct: side A link-down too (it dialed 9995)
+  [x] checked: MAME A/B s2gfx (frames 22-599 equal; the startup frame
+      offset predates this), M.U.L.E. DIRECT and network-booted from the
+      SD host against a private muleserver: name, tables, join, lobby
+  [x] v0.2.0 tagged (2405bdc), release.yml green, published 2026-10-25:
+      12 assets as v0.1.0's; 23 shipped binaries scanned, no BIOS bytes
+      (the scan caught the BIOS itself); the published GNOME build boots
+      M.U.L.E. with FujiNet connected
+  [ ] when #2187 merges: pin master, flatpak back to `type: git`, v0.2.1
+
+Not yet done / known differences
+  - macOS: written to the family's AppKit pattern, CI-verified only.
+  - No hardware exists for the cartridge (the firmware README's open
+    questions); everything here is held to MAME.

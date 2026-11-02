@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>online.fujinet.go.o2.kde</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>FujiNet Go Odyssey 2 (KDE)</name>
+  <summary>Magnavox Odyssey 2 with built-in FujiNet</summary>
+  <description>
+    <p>
+      A self-contained Magnavox Odyssey 2 with a FujiNet built in: browse a
+      network host from the console with the CONFIG client, boot cartridges
+      over the network, and let a FujiNet app keep talking to the network
+      once it is running, all in one application.
+    </p>
+    <p>
+      The machine is MAME's Magnavox Odyssey 2, its RCA CDP1802 COSMAC
+      processor and CDP1861 video chip transposed to C, with the FujiNet
+      Odyssey 2 cartridge always in the slot, serving the cartridge
+      firmware's own protocol: CONFIG is the cartridge's resident image, a
+      game booted over the network runs from the cartridge, and a local .st2
+      cartridge file can be opened in place of CONFIG. Import Cartridge to
+      SD puts a cartridge on FujiNet's SD folder, to boot it from CONFIG.
+    </p>
+    <p>
+      Both ten-key keypads are on screen and remappable, gamepads are picked
+      up as they are plugged in, and a native debugger is a key press away:
+      a command prompt, the 1802's registers and the console RAM, a
+      disassembly with breakpoints, the CDP1861's raster, the beeper and the
+      keypads as the console sees them, and the FujiNet cartridge.
+    </p>
+    <p>
+      Nothing copyrighted is included. CONFIG and the FujiNet apps boot on
+      the application's own stand-in for the BIOS; the console's games are
+      written in the BIOS's byte-code and need a BIOS of your own, imported
+      from the application.
+    </p>
+  </description>
+  <launchable type="desktop-id">online.fujinet.go.o2.kde.desktop</launchable>
+  <icon type="stock">online.fujinet.go.o2.kde</icon>
+  <!-- Software centres classify from these, not from the .desktop
+       Categories= line; without them the app lands in no section at all. -->
+  <categories>
+    <category>Game</category>
+    <category>Emulator</category>
+  </categories>
+  <url type="homepage">https://fujinet.online/</url>
+  <url type="bugtracker">https://github.com/FujiNetWIFI/fujinet-go-o2-desktop/issues</url>
+  <url type="vcs-browser">https://github.com/FujiNetWIFI/fujinet-go-o2-desktop</url>
+  <developer id="online.fujinet">
+    <name>FujiNet</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <caption>The FujiNet CONFIG client running on the console</caption>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/kde/1_running_config.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The built-in debugger, showing FujiBus traffic</caption>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/kde/2_debugger.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Both keypads on screen</caption>
+      <image>https://raw.githubusercontent.com/FujiNetWIFI/fujinet-go-o2-desktop/v0.2.1/data/screenshots/kde/3_keypad.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <!-- The CURRENT release templates its version from @PROJECT_VERSION@, so
+         it cannot disagree with the tree; past releases are literal. The
+         release job checks that this first entry is still a template. -->
+    <release version="@PROJECT_VERSION@" date="2026-11-01">
+      <description>
+        <p>
+          Lower CPU use: the picture is drawn on the GPU (with a software fallback) only when the emulator has a new frame, and the display stops updating while the window is hidden. The built-in FujiNet wakes about a tenth as often when nothing is happening. Needs Qt 6.7 or newer.
+        </p>
+      </description>
+    </release>
+    <release version="0.3.1" date="2026-11-01">
+      <description>
+        <p>
+          Fixed: the video area was see-through under KWin (Plasma). It is now opaque.
+        </p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-10-29">
+      <description>
+        <p>
+          New: use an external FujiNet. A switch in Preferences makes the app connect to another FujiNet instance at a host:port you enter (for example 127.0.0.1:11520) instead of starting the built-in one.
+        </p>
+      </description>
+    </release>
+    <release version="0.2.2" date="2026-10-27">
+      <description>
+        <p>
+          The Flatpak bundles now name Flathub as their runtime repository, so a downloaded bundle can fetch the GNOME or KDE runtime on a machine that has not set up Flathub.
+        </p>
+      </description>
+    </release>
+    <release version="0.2.1" date="2026-10-27">
+      <description>
+        <p>
+          The Flatpak builds on the GNOME 51 runtime. The software-centre
+          listing now credits FujiNet as developer, declares the app icon,
+          and shows a full set of screenshots for this frontend.
+        </p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-10-25">
+      <description>
+        <p>
+          The FujiNet cartridge speaks protocol 2: images up to 48K with a
+          bank window, pages the program can write and copy, and a graphics
+          layer (pictures at any pixel, rectangles, 16 sprites, a shaking or
+          flashing screen) drawn even while FujiNet is busy. M.U.L.E. boots
+          and plays. Quitting while a network app was mid-request no longer
+          crashes.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-10-20">
+      <description>
+        <p>
+          First release: the Magnavox Odyssey 2 transposed from MAME with the
+          FujiNet Odyssey 2 cartridge and an in-process FujiNet; CONFIG and
+          FujiNet apps boot without a BIOS, and games run on a BIOS you
+          import. Native GNOME, KDE, macOS and Windows frontends, both
+          keypads on screen, hotplugged gamepads, CLEAR and Reset to
+          CONFIG, and a native debugger with a FujiNet tab showing every
+          FujiBus packet between the Odyssey 2 and FujiNet.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>
