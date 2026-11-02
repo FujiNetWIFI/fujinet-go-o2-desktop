@@ -42,3 +42,9 @@ __pycache__/
 *.o
 *.p
 *.lst
+
+# MAME's run-time directories, when it is run from the repo root
+/cfg/
+/nvram/
+/snap/
+/diff/

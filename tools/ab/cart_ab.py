@@ -59,7 +59,7 @@ def main():
     ap.add_argument("carts", nargs="+")
     ap.add_argument("--frames", type=int, default=240)
     ap.add_argument("--keys", default="")
-    ap.add_argument("--machine", default="o2", choices=["o2", "g7000"])
+    ap.add_argument("--machine", default="o2", choices=["o2", "g7000", "g7400"])
     ap.add_argument("--report", action="store_true", help="print every cartridge, not only the differing ones")
     args = ap.parse_args()
 
@@ -68,11 +68,16 @@ def main():
     os.makedirs(work, exist_ok=True)
     bios = os.path.join(work, "o2bios.rom")
     font = os.path.join(work, "charset_i8244.bin")
-    open(bios, "wb").write(mame_file("videopac.zip", "o2bios.rom"))
+    font_ef = os.path.join(work, "charset_ef9340_1.rom")
+    if args.machine == "g7400":
+        open(bios, "wb").write(mame_file("videopacp.zip", "g7400.bin"))
+        open(font_ef, "wb").write(mame_file("ef9340_1.zip", "charset_ef9340_1.rom"))
+    else:
+        open(bios, "wb").write(mame_file("videopac.zip", "o2bios.rom"))
     open(font, "wb").write(mame_file("i8244.zip", "charset_i8244.bin"))
     # MAME reads both from its own rompath (the real set), no override needed
     romdir = os.path.join(o2ab.MAME_DIR, "roms")
-    machine = "odyssey2" if args.machine == "o2" else "videopac"
+    machine = {"o2": "odyssey2", "g7000": "videopac", "g7400": "videopacp"}[args.machine]
 
     keys = []
     for item in [k for k in args.keys.split(",") if k]:
@@ -89,16 +94,18 @@ def main():
             if os.path.exists(p):
                 os.unlink(p)
         env = {"VDC_LOG": mlog, "VDC_FRAMES": mraw, "VDC_FRAMES_N": args.frames}
-        if args.machine == "g7000":
+        if args.machine != "o2":
             env["VDC_PAL"] = "1"
         if keys:
             env["VDC_KEYS"] = ",".join("%d:%d:%d:%d" % k for k in keys)
         o2ab.run_mame(os.path.abspath(cart), os.path.join(HERE, "vdc_log.lua"), env,
                       args.frames / 50 + 2, romdir, machine=machine,
                       timeout=120)
-        cmd = [runner, "-machine", "o2" if args.machine == "o2" else "g7000",
+        cmd = [runner, "-machine", args.machine,
                "-bios", bios, "-font", font, "-game", cart,
                "-frames", str(args.frames), "-raw", oraw]
+        if args.machine == "g7400":
+            cmd += ["-font-ef", font_ef]
         for f, r, c, d in keys:
             cmd += ["-key", "%d:%d:%d:%d" % (f, r, c, d)]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)

@@ -88,7 +88,9 @@ struct o2_machine {
     bool have_ef;
     ef9340_t ef;
     i8243_t expander;
-    uint8_t mix_i8244, mix_ef934x;        /* the colour mix latches (P4-P7) */
+    ef9340_mix_t mix;                     /* the colour mix latches (P4-P7) */
+    int cart_b;                           /* the cartridge's pin B: 0 for every image */
+    uint64_t insn_start;                  /* the clock the running instruction started at */
 
     /* The Voice, in front of the cartridge (voice.c) */
     bool have_voice;

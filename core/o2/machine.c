@@ -91,6 +91,10 @@ static uint8_t io_read(void *user, uint8_t offset)
     if ((m->p1 & 0x48) == 0)
         data &= i8244_read(&m->vdc, now_of(m), offset);
 
+    /* G7400, vpp_state::io_vpp: P15 low selects the EF9341, A2 is its R/W */
+    if (m->have_ef && !(m->p1 & 0x20))
+        data = ef9340_io(&m->ef, m->insn_start, offset, data);
+
     bus_hook(m, O2_WATCH_XR, O2_BUS_XR, offset, data);
     return data;
 }
@@ -111,6 +115,9 @@ static void io_write(void *user, uint8_t offset, uint8_t data)
 
     if (!(m->p1 & 0x08))
         i8244_write(&m->vdc, now_of(m), offset, data);
+
+    if (m->have_ef && !(m->p1 & 0x20))
+        ef9340_io(&m->ef, m->insn_start, offset, data);
 }
 
 static void port_write(void *user, int port, uint8_t data)
@@ -126,6 +133,8 @@ static void port_write(void *user, int port, uint8_t data)
     } else {
         m->p2 = data;
         o2_cart_write_p2(m->cart, m->p2 & 0x0f);
+        if (m->have_ef)
+            i8243_p2_w(&m->expander, m->p2 & 0x0f);
         bus_hook(m, O2_WATCH_P2, O2_BUS_P2W, 2, data);
     }
 }
@@ -178,6 +187,41 @@ static int test_read(void *user, int n)
     return i8244_t1(&m->vdc, now_of(m));
 }
 
+/* PROG: the 8243 expander's strobe (G7400) */
+static void prog_write(void *user, int level)
+{
+    o2_machine_t *m = user;
+
+    if (m->have_ef)
+        i8243_prog_w(&m->expander, level);
+}
+
+/* vpp_state::i8243_port_w<P>: P4,P5 colour mix on the EF9340 side, P6,P7 on
+ * the 8245's. The picture is brought up to the beam with the old tables
+ * first, as update_now() does. */
+static void expander_out(void *user, int port, uint8_t data)
+{
+    o2_machine_t *m = user;
+
+    i8244_catch_up(&m->vdc, now_of(m));
+    ef9340_mix_port_w(&m->mix, port, data);
+}
+
+/* vpp_state::screen_update: the text layer is mixed into every row the 8245
+ * draws, and its CX line goes back to the 8245. */
+static void line_mix(void *user, i8244_t *v, int y, int x0, int x1)
+{
+    o2_machine_t *m = user;
+    uint8_t *row = v->bitmap + (size_t)y * I8244_WIDTH;
+    uint8_t cx[I8244_WIDTH];
+    int x;
+
+    ef9340_mix_span(&m->ef, &m->mix, y, x0, x1 + 1, row, i8244_lum(v), m->cart_b, row, cx);
+    for (x = x0; x <= x1; x++)
+        if (cx[x])
+            i8244_write_cx(v, x, 1);
+}
+
 /* the VDC's _INTR -> the 8048's INT */
 static void vdc_irq(void *user, int level)
 {
@@ -210,7 +254,6 @@ void o2_machine_init(o2_machine_t *m, const o2_machine_opts_t *opts)
     m->cart = opts->cart;
     m->fujinet = opts->fujinet;
     m->p1 = m->p2 = 0xff;
-    m->mix_i8244 = m->mix_ef934x = 0xff;
 
     i8244_init(&m->vdc, m->is_pal, opts->font);
     i8244_set_irq_callback(&m->vdc, vdc_irq, m);
@@ -225,6 +268,14 @@ void o2_machine_init(o2_machine_t *m, const o2_machine_opts_t *opts)
     bus.bus_read = bus_read;
     bus.bus_write = bus_write;
     bus.test_read = test_read;
+    bus.prog_write = prog_write;
+    if (m->machine == O2_MACHINE_VIDEOPAC_PLUS) {
+        m->have_ef = true;
+        ef9340_init(&m->ef, opts->font_ef);
+        ef9340_mix_reset(&m->mix);
+        i8243_init(&m->expander, NULL, expander_out, m);
+        i8244_set_line_callback(&m->vdc, line_mix, m);
+    }
     mcs48_init(&m->cpu, &bus);
     mcs48_reset(&m->cpu);
 
@@ -255,7 +306,7 @@ unsigned o2_machine_missing(const o2_machine_t *m)
 
     if (m->stub_parked)
         miss |= O2_MISSING_BIOS;
-    if (!m->vdc.font)
+    if (!m->vdc.font || (m->have_ef && !m->ef.font))
         miss |= O2_MISSING_FONT;
     return miss;
 }
@@ -288,7 +339,10 @@ static int step_inner(o2_machine_t *m)
         i8244_run_until(&m->vdc, now_of(m));
         return 4;
     }
-    i8244_run_until(&m->vdc, now_of(m));
+    m->insn_start = now_of(m);
+    i8244_run_until(&m->vdc, m->insn_start);
+    if (m->have_ef)
+        ef9340_run_until(&m->ef, m->insn_start);
     cycles = mcs48_step(&m->cpu);
     return cycles;
 }
