@@ -1,12 +1,13 @@
 /*
  * o2session -- the toolkit-agnostic desktop session for FujiNet Go Odyssey 2.
  *
- * Owns the emulator (the Magnavox Odyssey 2 core on its own paced thread -- see
- * core/o2/host.h), the FujiNet cartridge, the SDL audio and gamepad
+ * Owns the emulator (the Odyssey 2 / Videopac core on its own paced thread --
+ * see core/o2/host.h), the FujiNet cartridge, the SDL audio and gamepad
  * backends, the in-process FujiNet runtime, the shared settings store, the
- * remappable key/pad bindings, the imported BIOS and the media path layout. Frontends (GTK4, Qt6, AppKit, Win32) drive this API and do only
- * windowing, painting and event translation. A frontend that needs
- * something which is not one of those three things belongs here instead.
+ * remappable key/pad bindings, the imported ROMs and the media path layout.
+ * Frontends (GTK4, Qt6, AppKit, Win32) drive this API and do only windowing,
+ * painting and event translation. A frontend that needs something which is
+ * not one of those three things belongs here instead.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -21,35 +22,49 @@
 extern "C" {
 #endif
 
-/* MAME's visible area: 100 x 246 (the CDP1861's 64 x 128 picture inside
- * the blanking it draws nothing into). Frontends show it at the TV's 4:3
- * or with square pixels, per the "aspect" setting. */
-#define O2SESSION_FB_WIDTH  100
-#define O2SESSION_FB_HEIGHT 246
+/* MAME's visible area: 360 x 243 (the 8244/8245 VDC's picture; the G7400's
+ * EF9340 text layer is composited into the same frame). Frontends show it at
+ * the TV's 4:3 or with square pixels, per the "aspect" setting. */
+#define O2SESSION_FB_WIDTH  360
+#define O2SESSION_FB_HEIGHT 243
 
 /* FujiNet's BoIP listener and its web admin UI. High ports of this app's own
  * so a standalone fujinet-pc, or a sibling FujiNet Go app, never collides:
  * ADAM uses 65216/65214, Apple II 1985/64001, CoCo 65504/64002,
  * Intellivision 65503/64003, MSX 65505/64003, Astrocade 11500/11501,
  * ColecoVision 11502/11503, Atari 2600 11504/11505, NES 11506/11507, SMS
- * 11508/11521, Atari 7800 11510/11511, H89 11512/11513, Atari 800
- * 11514/11515, MS-DOS 11516/11517; the firmware's MAME dev harness for the
- * Odyssey 2 uses 9995/9997.
+ * 11508/11509, Atari 7800 11510/11511, H89 11512/11513, Atari 800
+ * 11514/11515, MS-DOS 11516/11517, Studio II 11518/11519; the firmware's
+ * MAME dev harness for the Odyssey 2 uses 9995/9997.
  *
  * Direction: FujiNet LISTENS and the Odyssey 2 FujiNet cartridge dials in, as
  * on every sibling. That decides startup ordering -- see o2session_start. */
 #define O2SESSION_BOIP_PORT  11520
 #define O2SESSION_WEBUI_PORT 11521
 
-/* The host audio device rate; the core streams the beeper at it. */
+/* The host audio device rate; the core streams the 8244's sound and The
+ * Voice's speech mixed at it. */
 #define O2SESSION_AUDIO_RATE 48000
 
 /* The accent colour every frontend uses for its highlights (the Map target,
  * held keys, the debugger's current line, the FujiNet status dot): the
- * console case's tan, as on the icon. On the light themes it is too pale for
- * text, so a frontend that draws text in it uses the darker variant. */
+ * Odyssey 2's power-button red, as on the console. White text sits on it; on
+ * the light themes a frontend that draws text in the accent uses the darker
+ * variant (the console's reset key). */
 #define O2SESSION_ACCENT_RGB      0xC11218
 #define O2SESSION_ACCENT_DARK_RGB 0x942324
+
+/* The machines. Odyssey 2: NTSC, 8244. Videopac G7000: PAL, 8245, the same
+ * BIOS. Videopac+ G7400: PAL, 8245 + EF9340/41 text chip + 8243, its own
+ * BIOS and a larger keyboard. Setting "machine". */
+typedef enum {
+    O2_MACHINE_ODYSSEY2 = 0,
+    O2_MACHINE_VIDEOPAC,
+    O2_MACHINE_VIDEOPAC_PLUS,
+    O2_MACHINE_COUNT
+} o2_machine;
+const char *o2_machine_name(int machine);        /* "Magnavox Odyssey 2 (NTSC)" */
+int o2_machine_is_pal(int machine);
 
 typedef struct o2session o2session;
 typedef struct o2debug o2debug;
@@ -85,8 +100,10 @@ void        o2session_settings_flush(o2session *s);
 /* ---- lifecycle ------------------------------------------------------------ */
 typedef struct {
     const char *cart_path;    /* cartridge image; NULL boots the CONFIG client */
+    int machine;              /* o2_machine */
     int use_bios;             /* run the imported BIOS when there is one (else
                                  the stand-in, which runs FujiNet apps only) */
+    int voice;                /* The Voice in front of the cartridge */
     int analog_joystick;      /* gamepad sticks drive the directions too */
     int enable_fujinet;       /* start the in-process FujiNet runtime */
     int external_fujinet;     /* 1: don't start it; dial another FujiNet
@@ -97,9 +114,9 @@ typedef struct {
     int enable_gamepad;       /* start the SDL gamepad thread */
 } o2session_start_opts;
 
-/* Fills opts from the settings store (keys: cart use_bios analog_joystick
- * enable_fujinet enable_audio enable_gamepad fujinet_external
- * fujinet_external_addr). */
+/* Fills opts from the settings store (keys: cart machine use_bios voice
+ * analog_joystick enable_fujinet enable_audio enable_gamepad
+ * fujinet_external fujinet_external_addr). */
 void o2session_default_opts(o2session *s, o2session_start_opts *opts);
 
 /* Starts FujiNet (if enabled) and then the machine.
@@ -123,26 +140,31 @@ int  o2session_restart(o2session *s);
 /* ---- cartridges ------------------------------------------------------------
  * The FujiNet cartridge is always in the slot; CONFIG is its resident image.
  *
- * load_cart puts a local image (.st2, or a raw .bin of up to 1K at $0400)
- * into the cartridge in place of CONFIG and power-cycles the console onto it,
- * as the firmware's MAME device serves $FUJINET_IMAGE: a FujiNet app (the
- * "FUJI" claim at $07FC) keeps the mailbox, a game runs alone. An image the
- * cartridge cannot plan is refused with the reason; so is a game while no
- * BIOS is imported (commercial games are BIOS byte-code: only the real BIOS
- * runs them). The path is remembered in the "cart" setting, so it boots
- * again next start. Returns 0 or -1 + error. */
+ * load_cart puts a local image (.bin, .rom or .o2) into the cartridge in
+ * place of CONFIG and power-cycles the console onto it, as the firmware's MAME
+ * device serves its -cart image: a FujiNet app (the "FUJI" claim at $F2C of an
+ * APPBANK image) keeps the mailbox, a game runs alone behind the FujiNet slot
+ * with the right mapper (standard, 4-in-1, rally, KTAA, by CRC as MAME's
+ * software list does). An image the cartridge cannot plan is refused with
+ * the reason; so is a game while no BIOS is imported (commercial games call
+ * the BIOS: only the real one runs them), and the Chess and Home Computer
+ * modules (their own CPUs). The path is remembered in the "cart" setting, so
+ * it boots again next start. Returns 0 or -1 + error. */
 int  o2session_load_cart(o2session *s, const char *path);
 const char *o2session_cart_path(const o2session *s);
-/* 1 if the image can run on the FujiNet cartridge; else 0 and why. */
+/* 1 if the image can run; else 0 and why. */
 int  o2session_check_cart(const char *path, char *why, int whysz);
 /* 1 if the image is a FujiNet app (runs without the BIOS). */
 int  o2session_cart_is_app(const char *path);
+/* A description of the cartridge now running ("Standard, 8 KB",
+ * "FujiNet CONFIG", "4-in-1", ...); returns the length. */
+int  o2session_cart_type_name(o2session *s, char *dst, int dstsz);
 
-/* CLEAR: the console's only button. It holds the CPU in reset and resets the
- * 1861; the cartridge restarts whatever it is serving. Pressed and released
- * for a few frames (the keypad window and the menus); the bound key (F3,
- * MAME's) holds it for as long as it is down. */
-int  o2session_clear(o2session *s);
+/* The console's red RESET key: it resets the 8048 only and never reaches the
+ * cartridge, so a running FujiNet app restarts from the cart's current image.
+ * Pressed and released for a few frames (the controllers window and the
+ * menus); the bound key (F1, MAME's) holds it for as long as it is down. */
+int  o2session_reset(o2session *s);
 /* Reset to CONFIG: a power cycle. Ejects an opened cartridge (clears the
  * "cart" setting) and boots CONFIG, exactly as at power-on -- on the
  * hardware, only taking the console's power away brings CONFIG back.
@@ -152,10 +174,20 @@ int  o2session_reset_to_config(o2session *s);
 /* Eject: the same as Reset to CONFIG (there is no "no cartridge" state
  * worth having on a FujiNet cartridge). */
 int  o2session_eject(o2session *s);
-/* 1 when the stand-in met a game it cannot run: no BIOS is imported and
- * CONFIG booted a game from the network. The frontends then say "Import
- * BIOS". Cleared by the next power cycle. */
+/* What the running configuration is missing, as a mask of O2_MISSING_*: the
+ * stand-in met a game it cannot run (no BIOS), the 8244's character set is not
+ * imported (text shows blank), a Voice game or the Voice switch has no speech
+ * ROM. The frontends say "Import BIOS" and name the part. Cleared by the next
+ * power cycle that fixes it. */
+#define O2_MISSING_BIOS   0x01   /* a game needs the console BIOS */
+#define O2_MISSING_FONT   0x02   /* the 8244/8245 (or EF9340) character set */
+#define O2_MISSING_VOICE  0x04   /* The Voice's speech ROMs */
+unsigned o2session_missing(o2session *s);
+/* Same as o2session_missing() & O2_MISSING_BIOS. */
 int  o2session_needs_bios(o2session *s);
+/* Pause/resume the machine (the debugger's Run/Stop is separate). */
+void o2session_set_paused(o2session *s, int paused);
+int  o2session_is_paused(const o2session *s);
 
 /* ---- video ---------------------------------------------------------------
  * copy_frame copies the latest frame into dst (FB_WIDTH*FB_HEIGHT uint32
@@ -175,7 +207,7 @@ void o2session_set_frame_callback(o2session *s, o2session_frame_cb cb, void *ctx
  * counts every frame, including the ones identical to their predecessor:
  * use it to ask "is the machine running", not "is the picture changing". */
 uint64_t o2session_frame_count(o2session *s);
-/* The machine's refresh rate, rounded (60: 1.76 MHz / 29344 = 59.98 Hz). */
+/* The machine's refresh rate, rounded (NTSC 60: 59.83 Hz; PAL 50: 49.70 Hz). */
 int  o2session_refresh_rate(o2session *s);
 
 /* Feed the UI's frame-clock ticks (CLOCK_MONOTONIC ns). While a steady
@@ -195,17 +227,20 @@ void o2session_set_volume(o2session *s, int percent);
 /* ---- input ---------------------------------------------------------------
  * Every control the machine has, flattened into one target index so the
  * bindings table, the settings store and the frontends can all name them:
- * per keypad (A, then B) its ten keys, then the console's CLEAR, then the
- * session's own actions. The console reads a keypad one key at a time (OUT 2
- * latches the key, EF3/EF4 report it), so any number may be held. */
+ * per stick (1, then 2) its four directions and the button, then the
+ * keyboard's 64 matrix positions (row * 8 + column; the Odyssey 2 uses
+ * 0-47, the Videopac+ G7400 adds rows 6 and 7), then the console's RESET
+ * key, then the session's own actions. The console reads the matrix one row
+ * at a time, so any number of keys may be held. */
 typedef enum {
-    O2_ACT_0 = 0, O2_ACT_1, O2_ACT_2, O2_ACT_3, O2_ACT_4,
-    O2_ACT_5, O2_ACT_6, O2_ACT_7, O2_ACT_8, O2_ACT_9,
+    O2_ACT_UP = 0, O2_ACT_RIGHT, O2_ACT_DOWN, O2_ACT_LEFT, O2_ACT_FIRE,
     O2_ACT_PER_PORT
 } o2_action;
 
+#define O2_KEY_COUNT 64
+
 typedef enum {
-    O2_SW_CLEAR = 0,                 /* F3 by default (MAME's) */
+    O2_SW_RESET = 0,                 /* F1 by default (MAME's) */
     O2_SW_COUNT
 } o2_switch;
 
@@ -216,22 +251,53 @@ typedef enum {
 } o2_sysaction;
 
 #define O2_TARGET_PORT(port, act) ((port) * O2_ACT_PER_PORT + (act))
-#define O2_TARGET_SWITCH(sw)      (2 * O2_ACT_PER_PORT + (sw))
-#define O2_TARGET_SYSACT(sa)      (2 * O2_ACT_PER_PORT + O2_SW_COUNT + (sa))
-#define O2_TARGET_COUNT           (2 * O2_ACT_PER_PORT + O2_SW_COUNT + O2_SYSACT_COUNT)
+#define O2_TARGET_KEY(key)        (2 * O2_ACT_PER_PORT + (key))
+#define O2_TARGET_SWITCH(sw)      (2 * O2_ACT_PER_PORT + O2_KEY_COUNT + (sw))
+#define O2_TARGET_SYSACT(sa)      (2 * O2_ACT_PER_PORT + O2_KEY_COUNT + O2_SW_COUNT + (sa))
+#define O2_TARGET_COUNT           (2 * O2_ACT_PER_PORT + O2_KEY_COUNT + O2_SW_COUNT + O2_SYSACT_COUNT)
 
-/* Apply one control directly. `down` is press/release. The console buttons
- * are held, as the console samples them once a frame. */
+/* Apply one control directly. `down` is press/release. The matrix and the
+ * sticks are sampled by the console at the frame boundary, as MAME's input
+ * ports are. */
 void o2session_press(o2session *s, int target, int down);
 void o2session_sysaction(o2session *s, int sysact);
 /* Release everything the keyboard holds (focus loss). */
 void o2session_release_all(o2session *s);
-/* What the console sees held on a keypad right now (keyboard, gamepads and
- * the keypad window together), one bit per o2_action. For the keypad
- * window's highlights. */
+/* What the console sees held on a stick right now (keyboard and gamepads
+ * together), one bit per o2_action. For the controllers window's highlights. */
 unsigned o2session_buttons_held(o2session *s, int port);
+/* Whether matrix key `key` (0-63) is held, from any source. */
+int o2session_key_held(o2session *s, int key);
 /* Whether a console button is held (o2_switch). */
 int o2session_switch_held(o2session *s, int sw);
+
+/* ---- the on-screen keyboard -----------------------------------------------
+ * The membrane keyboard as it is printed on the console (the Odyssey 2's, or
+ * the Videopac+ G7400's when that machine is selected): one entry per key cap,
+ * in key-cap units (1.0 = a letter key), x/y/w/h from the top-left of the
+ * panel. `target` is the matrix position (a binding target is
+ * O2_TARGET_KEY(target)); -1 marks the RESET key, which is O2_SW_RESET.
+ * YES and NO are separate caps that press the same switches as Y and N (the
+ * console wires each pair to one matrix position). `kind` says how a toolkit
+ * should paint it: normal, function (red legend), input, reset, space. The
+ * table is static; the pointer stays valid for the process. */
+typedef enum {
+    O2_KEYCAP_NORMAL = 0, O2_KEYCAP_FUNCTION, O2_KEYCAP_INPUT,
+    O2_KEYCAP_RESET, O2_KEYCAP_SPACE
+} o2_keycap_kind;
+
+typedef struct {
+    const char *label;       /* "Q", "+", "\xc3\x97" (x), "YES", "ENTER", "SPACE" */
+    int target;              /* matrix position 0-63, or -1 for RESET */
+    float x, y, w, h;
+    int kind;                /* o2_keycap_kind */
+} o2_keycap;
+
+/* The layout for a machine; *n is its entry count; width/height (key units)
+ * are the panel's extent so a toolkit can size its drawing area. */
+const o2_keycap *o2session_keyboard_layout(int machine, int *n, float *width, float *height);
+/* The label a matrix position has ("Q", "ENTER", "Y / YES"), or NULL. */
+const char *o2session_key_label(int machine, int key);
 
 /* ---- keyboard translation ------------------------------------------------
  * keysym is an X11/xkb keysym (== a GDK keyval; Qt, Win32 and AppKit map
@@ -347,33 +413,49 @@ int  o2session_gamepad_last_event(o2session *s, char *dst, int dstsz);
 void o2session_sysaction_post(o2session *s, int sysact);
 int  o2session_sysaction_take(o2session *s, int *out);
 
-/* ---- the BIOS --------------------------------------------------------------
- * Never shipped (see COMPLIANCE.md), and only needed for games: CONFIG and
- * FujiNet apps boot on the app's own stand-in. Import BIOS copies a user's
- * own dump into the ROM directory, identified by size and CRC-32 against
- * MAME's o2 set: the whole 2K, or one of its four 512-byte ROMs (ic11
- * and ic12 -- the system ROM -- are what the console runs; the cart always
- * hides the built-in games at $0400). */
-typedef struct {
-    const char *name;         /* "o2", "84932.ic11", ... */
-    const char *file;         /* stored as */
-    const char *desc;         /* "Magnavox Odyssey 2 BIOS (2K)" */
-    uint32_t size, crc;
-} o2_bios_info;
+/* ---- the ROMs ----------------------------------------------------------------
+ * Never shipped (see COMPLIANCE.md). CONFIG and every FujiNet app boot on the
+ * app's own stand-in BIOS; a game needs the real one, and every machine needs
+ * the video chip's character set to show text. Import copies a user's own
+ * dumps into the ROM directory, each identified by size and CRC-32 against
+ * MAME's tables whatever it is called, and stored under MAME's name. The
+ * input can be a file, a zip (MAME's videopac.zip, i8244.zip, videopacp.zip
+ * work) or a folder (searched 8 levels deep). */
+typedef enum {
+    O2_ROM_BIOS = 0,          /* o2bios.rom: Odyssey 2 and Videopac G7000 */
+    O2_ROM_BIOS_G7400,        /* g7400.bin: Videopac+ G7400 */
+    O2_ROM_FONT_8244,         /* charset_i8244.bin: the 8244/8245's characters */
+    O2_ROM_FONT_EF9340,       /* charset_ef9340_1.rom: the G7400's text chip */
+    O2_ROM_VOICE_INTERNAL,    /* sp0256b-019.bin: The Voice's SP0256 mask ROM */
+    O2_ROM_VOICE_SPEECH,      /* spr128-003.bin: The Voice's speech ROM */
+    O2_ROM_VOICE_SID,         /* spr128-004.bin: Sid the Spellbinder's speech */
+    O2_ROM_COUNT
+} o2_rom_id;
 
-int o2session_bios_count(void);
-const o2_bios_info *o2session_bios_info(int i);
-/* 1 if image i is in the ROM directory. */
-int o2session_bios_available(o2session *s, int i);
-/* 1 if the console's system ROM can be assembled from what is imported. */
-int o2session_have_bios(o2session *s);
-/* Import a BIOS image. Returns its index (>= 0), or -1 with the error. A 2K
- * or 1K image whose CRC is not in the table is imported as the 2K set with
- * a warning in `msg`. `msg` always says what happened. It boots at the next
- * power cycle. */
-int o2session_import_bios(o2session *s, const char *path, char *msg, int msgsz);
-/* 1 if `path` is a BIOS image by size and CRC (a dropped file). */
-int o2session_media_is_bios(const char *path);
+typedef struct {
+    const char *name;         /* "Odyssey 2 / Videopac BIOS (o2bios.rom)" */
+    const char *group;        /* "Console", "Video chips", "The Voice" */
+    const char *file;         /* stored as */
+    uint32_t size, crc;
+} o2_rom_item;
+
+int o2session_rom_item_count(void);
+const o2_rom_item *o2session_rom_item(int i);
+/* 1 if item i is in the ROM directory. */
+int o2session_rom_item_available(o2session *s, int i);
+/* 1 if the console BIOS for `machine` is imported / the character set(s) it
+ * needs are / The Voice's ROMs are. */
+int o2session_have_bios(o2session *s, int machine);
+int o2session_have_font(o2session *s, int machine);
+int o2session_have_voice(o2session *s);
+/* Import from a file, a zip or a folder. Returns how many items it imported
+ * (0 = recognised nothing), or -1 with the error in `msg`; `msg` always says
+ * what happened (names the items, warns about an unrecognised dump of the
+ * right size). Takes effect at the next power cycle. */
+int o2session_rom_import(o2session *s, const char *path, char *msg, int msgsz);
+/* 1 if `path` is a ROM this app imports (a dropped file or zip), by size and
+ * CRC (a zip: by any of its entries). */
+int o2session_media_is_rom(const char *path);
 const char *o2session_roms_path(const o2session *s);
 
 /* ---- FujiNet -------------------------------------------------------------*/
@@ -407,8 +489,9 @@ int         o2session_cart_booted_game(o2session *s);
 int  o2session_import_cart_to_sd(o2session *s, const char *src_path,
                                   char *dest_out, int dest_sz);
 /* Routes a dropped file: cartridge images to the cartridge directory (the
- * returned path is usable with load_cart), BIOS images to the ROM directory
- * (as import_bios), anything else to the FujiNet SD folder. */
+ * returned path is usable with load_cart), ROM images (BIOS, character sets,
+ * speech; also zips of them) to the ROM directory (as rom_import), anything
+ * else to the FujiNet SD folder. */
 int  o2session_import_media(o2session *s, const char *src_path,
                              char *dest_out, int dest_sz);
 int  o2session_media_is_cartridge(const char *path);

@@ -93,6 +93,9 @@ int o2_cart_init(o2_cart_t *c, int type, const uint8_t *rom, uint32_t size, cons
 
 const char *o2_cart_type_name(int type);
 
+/* CRC-32 (IEEE: the zip/MAME polynomial). */
+uint32_t o2_crc32(const uint8_t *p, uint32_t n);
+
 /* The slot with nothing in it: reads $FF. */
 extern const o2_cart_ops_t o2_cart_empty_ops;
 

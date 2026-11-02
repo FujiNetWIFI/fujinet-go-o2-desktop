@@ -15,7 +15,7 @@
 
 #include <string.h>
 
-static uint32_t crc32_of(const uint8_t *p, uint32_t n)
+uint32_t o2_crc32(const uint8_t *p, uint32_t n)
 {
     static uint32_t table[256];
     static int ready;
@@ -170,7 +170,7 @@ int o2_cart_identify(const uint8_t *img, uint32_t size, bool *needs_voice)
 {
     if (needs_voice)
         *needs_voice = false;
-    uint32_t crc = crc32_of(img, size);
+    uint32_t crc = o2_crc32(img, size);
     for (size_t i = 0; i < sizeof k_db / sizeof k_db[0]; i++) {
         if (k_db[i].crc == crc) {
             if (needs_voice)

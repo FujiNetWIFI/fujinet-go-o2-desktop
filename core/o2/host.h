@@ -9,11 +9,16 @@
  * session.
  *
  * Pacing: the machine runs a whole frame (to the next VBLANK) at a time
- * against an absolute monotonic deadline ladder at the exact frame rate --
- * 29344 clocks at 1.76 MHz (59.98 Hz). While a frontend feeds display ticks
- * at that rate (o2_host_notify_vsync) the machine phase-locks one frame
- * per tick instead. The siblings' hardest-won lesson applies: VERIFY the
- * pacing -- the boot_smoke test measures it.
+ * against an absolute monotonic deadline ladder at the machine's exact frame
+ * rate -- NTSC 59.83 Hz, PAL 49.70 Hz. While a frontend feeds display ticks
+ * at that rate (o2_host_notify_vsync) the machine phase-locks one frame per
+ * tick instead (only possible near 60 Hz: a 50 Hz machine on a 60 Hz display
+ * stays on the wall clock). The siblings' hardest-won lesson applies: VERIFY
+ * the pacing -- the boot_smoke test measures it.
+ *
+ * Energy: a frame identical to its predecessor is not republished, the frame
+ * callback tells a frontend when there is something to draw, and the machine
+ * sleeps to its deadline rather than spinning.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -32,13 +37,35 @@ extern "C" {
 #endif
 
 typedef struct {
-    const uint8_t *bios;         /* copied; NULL runs the no-BIOS stand-in */
+    int machine;                 /* O2_MACHINE_* (core/o2/o2_internal.h) */
+
+    /* ROMs, each copied; NULL = not imported. */
+    const uint8_t *bios;         /* the console's 1 KB system ROM; NULL runs the
+                                    no-BIOS stand-in (Odyssey 2 / G7000 only) */
     uint32_t bios_size;
+    const uint8_t *font;         /* the 8244/8245's 512-byte character set */
+    uint32_t font_size;
+    const uint8_t *font_ef;      /* the EF9340's 0xA00-byte character set */
+    uint32_t font_ef_size;
+    bool voice;                  /* The Voice in front of the cartridge */
+    const uint8_t *voice_rom;    /* sp0256b-019.bin (2 KB) */
+    uint32_t voice_rom_size;
+    const uint8_t *voice_speech; /* spr128-003.bin (16 KB) */
+    uint32_t voice_speech_size;
+    const uint8_t *voice_game;   /* a game's own speech ROM (spr128-004.bin), or NULL */
+    uint32_t voice_game_size;
+
     const uint8_t *cart;         /* an opened image, copied; NULL boots CONFIG */
     uint32_t cart_size;
+    int cart_type;               /* O2_CART_* (carts.h) from o2_cart_identify */
+    bool cart_app;               /* a FujiNet app (claims the mailbox): served
+                                    by the FujiNet cartridge, mailbox live.
+                                    Otherwise a game: the mapper cart for
+                                    cart_type sits in the slot instead, as a
+                                    real cartridge would, and FujiNet is not
+                                    reachable until the next power cycle. */
     const char *boip_hostport;   /* fujinet-pc's BoIP listener, "host:port" */
     bool cart_sync;              /* run the mailbox inline (tests) */
-    bool mame_power_on;          /* no CLEAR pulse at power-on (A/B runs) */
 } o2_host_opts_t;
 
 /* Start the machine thread. Returns 0, or -1 with o2_host_last_error()
@@ -53,14 +80,15 @@ void o2_host_stop(void);
 bool o2_host_is_running(void);
 const char *o2_host_last_error(void);
 
-/* The Clear key, pressed for a few frames and released (the menus' and the
- * keypad window's CLEAR when it is clicked rather than held). */
-void o2_host_clear_pulse(void);
+/* Pause: the machine thread parks between frames and the audio goes silent
+ * (the session's pause; the debugger's own stop is separate). */
+void o2_host_set_paused(bool paused);
+bool o2_host_is_paused(void);
 
 /* ---- video: latest-wins single slot ----
- * Copies the newest frame into dst (O2_FB_WIDTH x O2_FB_HEIGHT
- * XRGB words) when its serial differs from *serial_inout; returns nonzero
- * and updates the serial when it copied. */
+ * Copies the newest frame into dst (O2_FB_WIDTH x O2_FB_HEIGHT XRGB words)
+ * when its serial differs from *serial_inout; returns nonzero and updates the
+ * serial when it copied. */
 int o2_host_frame_copy(uint32_t *dst, uint64_t *serial_inout);
 /* Called on the machine thread right after each new frame is published, so a
  * frontend with no frame clock can draw when there is something to draw
@@ -84,24 +112,34 @@ double o2_host_frame_rate(void);
 
 void o2_host_notify_vsync(int64_t frame_time_ns);
 
-/* ---- audio: 48 kHz interleaved stereo float, self-correcting backlog ----
- * Returns frames written (no padding). */
+/* ---- audio: 48 kHz interleaved stereo float (mono mirrored), self-
+ * correcting backlog. Returns frames written (no padding). */
 int o2_host_audio_copy(float *dst, int max_frames);
 void o2_host_audio_reset(void);
 
 /* ---- inputs (callable from any thread; latched by the machine once a
  * frame, at VBLANK, as MAME's input ports are) ---- */
-void o2_host_keypad_set(int pad, uint16_t mask);  /* bit n = key n */
-void o2_host_clear_set(bool down);                /* the Clear key */
+/* The keyboard matrix: bit (row * 8 + col) set = that key held (0-47 on the
+ * Odyssey 2; 0-63 on the G7400). */
+void o2_host_keys_set(uint64_t matrix);
+/* A stick: bit 0 UP, 1 RIGHT, 2 DOWN, 3 LEFT, 4 BUTTON (MAME's JOY bits). */
+void o2_host_stick_set(int stick, uint8_t bits);
+/* The console's RESET key (resets the 8048 while held). */
+void o2_host_reset_set(bool down);
+/* Pressed for a few frames and released (the menus' and the controllers
+ * window's RESET when it is clicked rather than held). */
+void o2_host_reset_pulse(void);
 void o2_host_release_all(void);
 
-/* The stand-in met a game it cannot run (no BIOS imported). */
-bool o2_host_needs_bios(void);
+/* What the running configuration is missing (O2_MISSING_* in o2session.h:
+ * BIOS 1, font 2, voice 4): a game met the stand-in, a font was not imported,
+ * the Voice has no speech ROM. */
+unsigned o2_host_missing(void);
 
 /* ---- the cartridge ---- */
 void o2_host_cart_status(o2_cart_status_t *out);
-/* The cart device, or NULL when not running (the debugger's page map,
- * text engine and arena dumps). Use it under o2_host_lock. */
+/* The cart device, or NULL when not running (the debugger's page map and
+ * mailbox views). Use it under o2_host_lock. */
 o2_cart_t *o2_host_cart(void);
 
 /* ---- the run lock ----
