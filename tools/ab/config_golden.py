@@ -38,7 +38,12 @@ def c_array(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=450)
-    ap.add_argument("--at", default="40,100,160,220,300,400")
+    # Steady pictures only: the splash (40-130) and the hosts screen (220+).
+    # Frames 159-165 are the splash -> hosts transition; our core runs the
+    # same six frames as MAME, pixel for pixel, but one frame EARLIER (from a
+    # one-frame power-on phase difference in the first ~9 frames), so a
+    # sample inside that window cannot match.
+    ap.add_argument("--at", default="40,100,130,220,300,400")
     args = ap.parse_args()
     at = [int(x) for x in args.at.split(",")]
 

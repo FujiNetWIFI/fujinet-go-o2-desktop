@@ -84,6 +84,14 @@
     <release version="@PROJECT_VERSION@" date="2026-11-02">
       <description>
         <p>
+          The CONFIG client's start-up splash now shows the FujiNet logo.
+          0.1.0 embedded an earlier CONFIG whose logo was wrong.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-11-02">
+      <description>
+        <p>
           First release: the Magnavox Odyssey 2, the Philips Videopac G7000
           and the Videopac+ G7400 transposed from MAME, with the FujiNet
           Odyssey 2 cartridge and an in-process FujiNet; a Controllers window

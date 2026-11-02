@@ -32,18 +32,19 @@
 
 find_package(Git QUIET)
 
-# fujinet-firmware PR #2237's head (e7e85b95a, branch o2-config: the baked
-# APPBANK CONFIG, the status page kept until the $400 swap, the async MAME
-# push) plus the BoIP idle-wait fix (PR #2247; b59117665, branch
-# boip-idle-wait-on-o2-config on the tschak909 fork): the Magnavox Odyssey 2
+# fujinet-firmware PR #2237's head (d1921ac95, branch o2-config: the baked
+# APPBANK CONFIG -- fujinet-config 1154960, with the FujiNet logo -- the
+# status page kept until the $400 swap, the async MAME push) plus the BoIP
+# idle-wait fix (PR #2247, since merged to master as 0c9f00c16; the pin
+# carries its cherry-pick b59117665) as 77d7dd3f3, branch
+# boip-idle-wait-on-o2-config on the tschak909 fork: the Magnavox Odyssey 2
 # cartridge (pico/o2) with protocol 2 (APPBANK images up to 63K, #2177).
 # The fix cuts an idle FujiNet-PC from ~1000 wakeups/s to ~100/s. TEMPORARY:
 # it is on no FujiNetWIFI branch, so the URL is the fork and the flatpak
 # manifests take it as an archive. The fork branch must not be deleted while
-# this pin points at it; back to master once #2237 and #2247 merge. Recorded
-# in three places -- here and in both flatpak manifests
-# (build-aux/flatpak/*.yml).
-set(FUJINET_COMMIT "b59117665a716484111e6c4c7a6aa99600ac4993")
+# this pin points at it; back to master once #2237 merges. Recorded in three
+# places -- here and in both flatpak manifests (build-aux/flatpak/*.yml).
+set(FUJINET_COMMIT "77d7dd3f3066b8d046dc18306e7e8a8f32b92392")
 set(FUJINET_URL "https://github.com/tschak909/fujinet-firmware")
 
 # o2_provide_dependency(NAME <n> PATH <p> SENTINEL <file> OVERRIDE <VAR>

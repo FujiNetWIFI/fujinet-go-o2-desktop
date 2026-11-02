@@ -71,7 +71,14 @@
     <!-- The CURRENT release templates its version from @PROJECT_VERSION@, so
          it cannot disagree with the tree; past releases are literal. The
          release job checks that this first entry is still a template. -->
-    <release version="@PROJECT_VERSION@" date="2026-11-01">
+    <release version="@PROJECT_VERSION@" date="2026-11-02">
+      <description>
+        <p>
+          The CONFIG client's start-up splash now shows the FujiNet logo. 0.1.0 embedded an earlier CONFIG whose logo was wrong.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-11-01">
       <description>
         <p>
           First release: the Magnavox Odyssey 2, Philips Videopac G7000 and Videopac+ G7400 transposed from MAME with the FujiNet Odyssey 2 cartridge and an in-process FujiNet. CONFIG and FujiNet apps boot without a BIOS; games run on a BIOS you import. The membrane keyboard and both joysticks are on screen, and the debugger shows everything the 8244 knows. Needs Qt 6.7 or newer.

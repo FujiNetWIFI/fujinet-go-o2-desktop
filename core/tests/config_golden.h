@@ -3,9 +3,9 @@
  * stand-in BIOS with the generated test font, link down. Do not edit. */
 
 static const struct { int frame; unsigned long long hash; } k_config_golden[] = {
-    { 40, 0xfa196e1ae19e249dull },
-    { 100, 0xfa196e1ae19e249dull },
-    { 160, 0xfa196e1ae19e249dull },
+    { 40, 0x72d6fc46d41e9555ull },
+    { 100, 0x72d6fc46d41e9555ull },
+    { 130, 0x72d6fc46d41e9555ull },
     { 220, 0x4a8f1291abf58149ull },
     { 300, 0x4a8f1291abf58149ull },
     { 400, 0x4a8f1291abf58149ull },

@@ -1,11 +1,12 @@
 FujiNet Go Odyssey 2 desktop -- milestone log and what is left
 
-Status at v0.1.0 (see README.md "How this was verified" for the evidence).
+Status at v0.1.1 (see README.md "How this was verified" for the evidence).
 
 DONE
   [x] M0  skeleton cloned from the Studio II desktop (v0.4.0); firmware pin =
-          PR #2237's head + the BoIP idle-wait fix (PR #2247), fork branch
-          tschak909/fujinet-firmware boip-idle-wait-on-o2-config (b59117665);
+          PR #2237's head (CONFIG 1154960, FujiNet logo) + the BoIP idle-wait
+          fix (PR #2247, merged), fork branch tschak909/fujinet-firmware
+          boip-idle-wait-on-o2-config (77d7dd3f3);
           runtime build script (anchors audited against the pin, libnfs
           strncpy patch, -Werror guard, Windows log-capture fix)
   [x] M1  8048 (mcs48.c) + disassembler (dasm48.c), traces identical to MAME on
@@ -36,6 +37,13 @@ KNOWN GAPS / NEXT
   [ ] Atlantis' sprite multiplexing differs from MAME in ~0.3% of its pixels
       (CONFIG and most carts match; cause not found). First two power-on
       frames of every cart differ from MAME's.
+  [ ] CONFIG on the FujiNet cart runs ONE FRAME AHEAD of MAME from frame ~9 on
+      (our frames 3-9 differ, then the same pictures come a frame early). Seen
+      at the splash -> hosts transition: our frames 159-165 are MAME's 160-166,
+      pixel for pixel, six distinct frames. MAME is deterministic there (3
+      runs). Not found: both cart models are synchronous, so look at the
+      power-on beam phase. config_frames therefore samples steady pictures
+      only (40/100/130 splash, 220+ hosts), never 159-165.
   [ ] config_boot and netboot tests (the real in-process FujiNet driving CONFIG
       and the firmware's fujiboot/fujitest clients) are parked: the sources
       still carry the Studio II calls (core/tests/config_boot_test.c,

@@ -182,7 +182,10 @@ slow network transaction never stalls the picture.
     (`config_frames`, no ROM needed), and with the real BIOS two carts
     (Baseball, Alpine Skiing) match all but the first two power-on frames on
     all three machines. **Known gap:** Atlantis' sprite multiplexing differs
-    from MAME in about 0.3% of its pixels; not explained.
+    from MAME in about 0.3% of its pixels; not explained. CONFIG itself runs
+    one frame ahead of MAME after boot (its splash ends a frame early, the
+    transition frames identical); `config_frames` samples steady pictures
+    only.
 - **The stand-in BIOS** runs CONFIG's own MAME scenarios (hosts, edit, boot,
   browse) with the same results as the real BIOS, and `stub_boot` presses
   every key of the matrix and every stick direction through it.

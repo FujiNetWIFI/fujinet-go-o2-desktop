@@ -123,8 +123,8 @@ modules:
       # o2_provide_dependency() skips its own fetch once it finds
       # build.sh (the SENTINEL) already here.
       - type: archive
-        url: https://github.com/tschak909/fujinet-firmware/archive/b59117665a716484111e6c4c7a6aa99600ac4993.tar.gz
-        sha256: e58b0b7f0475a54fe73f603d7792b6508b6b74b1231facbaa310d30ac3fba76f
+        url: https://github.com/tschak909/fujinet-firmware/archive/77d7dd3f3066b8d046dc18306e7e8a8f32b92392.tar.gz
+        sha256: 8893d40b2f5639e3b9dbdf22cdab1bb4b046b9f45f077bd38e1bf26709046ffd
         dest: third_party/fujinet-firmware
       # Same reasoning: the sandboxed build step has no network access, but
       # tools/fujinet/build-fujinet-desktop.sh needs mbedTLS 3.x and
