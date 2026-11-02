@@ -439,7 +439,14 @@ static int step_inner(o2_machine_t *m)
         return 4;
     }
     m->insn_start = now_of(m);
-    i8244_run_until(&m->vdc, m->insn_start);
+    /* the 8048 samples INT one machine cycle before an instruction starts */
+    /* The 8048 takes the vblank interrupt about 0.9 of a machine cycle before
+     * the VDC's own event time: MAME's CPU accepts it at the boundary whose
+     * start is within 15-19 pixel clocks (NTSC) of the event, measured against
+     * a 60-frame MAME access log (any value from 15 to 19 matches; the CPU
+     * port's notes put the NTSC range at 17-21). The lead is a property of
+     * how MAME interleaves its CPU and timers, not of the hardware. */
+    i8244_run_until(&m->vdc, m->insn_start + (uint64_t)(m->cycle_clocks * 9 / 10));
     if (m->have_ef)
         ef9340_run_until(&m->ef, m->insn_start);
     cycles = mcs48_step(&m->cpu);
