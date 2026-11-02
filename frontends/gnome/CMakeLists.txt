@@ -34,11 +34,12 @@ add_executable(fujinet-go-o2-gnome
   display.c
   prefs.c
   fujilog.c
-  keypad/keypad_window.c
+  controllers/controllers_window.c
   debugger/dbg_window.c
+  debugger/dbg_video.c
 )
 target_link_libraries(fujinet-go-o2-gnome
-  PRIVATE o2_session PkgConfig::GTK4 PkgConfig::ADW)
+  PRIVATE o2_session PkgConfig::GTK4 PkgConfig::ADW m)
 target_compile_options(fujinet-go-o2-gnome PRIVATE -Wall -Wextra)
 # Where the in-tree icon theme lives, for running uninstalled (see main.c).
 target_compile_definitions(fujinet-go-o2-gnome PRIVATE

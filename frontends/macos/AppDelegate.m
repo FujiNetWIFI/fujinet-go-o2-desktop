@@ -14,7 +14,8 @@
 
 #import "DisplayView.h"
 #import "KeyForward.h"
-#import "keypad/KeypadWindow.h"
+#import "SettingsWindow.h"
+#import "controllers/ControllersWindow.h"
 #import "debugger/DebuggerWindow.h"
 
 #include <stdlib.h>
@@ -29,8 +30,17 @@
 #define WEBSITE_URL "https://fujinet.online/"
 #define ISSUES_URL  "https://github.com/FujiNetWIFI/fujinet-go-o2-desktop/issues"
 
-/* How long a gamepad connect/disconnect message stays over the picture. */
+/* How long a gamepad connect/disconnect or import message stays over the
+ * picture. */
 #define TOAST_SECONDS 3.0
+
+#define BANNER_H 24.0
+
+static NSString *nsstr(const char *s)
+{
+    NSString *r = s ? [NSString stringWithUTF8String:s] : nil;
+    return r ? r : @"";
+}
 
 /* The open panels' filters: a type per extension (a dynamic one for an
  * extension nothing has registered, which still matches by extension). */
@@ -53,9 +63,10 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 @property (nonatomic, weak) O2AppDelegate *owner;
 @end
 
-@interface O2AppDelegate ()
+@interface O2AppDelegate () <O2SettingsDelegate>
 - (void)runSysaction:(int)sa;
-- (void)loadMedia:(NSString *)path;
+- (void)loadMediaPaths:(NSArray<NSString *> *)paths;
+- (BOOL)handleAppKey:(uint32_t)keysym;
 @end
 
 @implementation O2ContentView
@@ -71,12 +82,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if ([e modifierFlags] & NSEventModifierFlagCommand) return;
     const uint32_t ks = O2KeysymFromEvent(e);
     if (!ks) return;
-    if (ks == O2_KEYSYM_F9) { [O2KeypadWindow toggleWithSession:self.session]; return; }
-    if (ks == O2_KEYSYM_F11) { [[self window] toggleFullScreen:nil]; return; }
-    if (ks == O2_KEYSYM_F12) { [O2DebuggerWindow toggleForSession:self.session]; return; }
-
-    const int sa = o2session_key_sysaction(self.session, ks);
-    if (sa >= 0) { [self.owner runSysaction:sa]; return; }
+    if ([self.owner handleAppKey:ks]) return;
     o2session_key(self.session, ks, 1);
 }
 
@@ -86,9 +92,8 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if (ks) o2session_key(self.session, ks, 0);
 }
 
-/* Modifier keys arrive as flagsChanged, not keyDown/keyUp; Left Alt is
- * keypad A's 0 by default, and a binding moved onto Shift or Control would
- * otherwise never press. */
+/* Modifier keys arrive as flagsChanged, not keyDown/keyUp; a binding moved
+ * onto Shift, Control or Option would otherwise never press. */
 - (void)flagsChanged:(NSEvent *)e
 {
     int down = 0;
@@ -106,7 +111,10 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 {
     NSArray *urls = [[sender draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:nil];
     if ([urls count] == 0) return NO;
-    [self.owner loadMedia:[(NSURL *)urls[0] path]];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    for (NSURL *u in urls) [paths addObject:[u path]];
+    /* after the drag session: what the drop does can be an alert */
+    dispatch_async(dispatch_get_main_queue(), ^{ [self.owner loadMediaPaths:paths]; });
     return YES;
 }
 @end
@@ -122,26 +130,25 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     NSTimer *_statusTimer;
     NSTimer *_sysactTimer;
     BOOL _needsBiosShown;        /* the "needs the BIOS" alert, once per occurrence */
+    NSString *_refusedCart;      /* a cartridge refused for want of a ROM: retried after an import */
 
-    /* the transient gamepad hot-plug / import message */
+    /* the transient message over the picture */
     NSTextField *_toast;
     unsigned _toastGeneration;
     NSUInteger _toastSerial;
+    /* the persistent "ROM missing" strip along the bottom */
+    NSButton *_banner;
+    unsigned _bannerMask;
 
     NSMenuItem *_aspectItem;
+    NSMenuItem *_smoothItem;
 
     /* an open panel with an "All files" choice, while it runs */
     NSOpenPanel *_panel;
     NSArray<UTType *> *_panelTypes;
 
-    NSWindow *_settingsWindow;
-    BOOL _sessionDirty;
-    NSPopUpButton *_padList, *_padPort, *_aspectPopup;
-    NSTextField *_biosStatus;
-    NSButton *_biosImport;
-    NSTextField *_webUiLabel, *_externalField;
-    NSTimer *_settingsTimer;
-    unsigned _padGeneration;
+    O2SettingsWindow *_settings;
+    O2ControllersWindow *_controllers;
 
     NSWindow *_logWindow;
     NSTextView *_logView;
@@ -160,17 +167,17 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 - (NSString *)lastError
 {
     const char *e = o2session_last_error(_session);
-    return (e && e[0]) ? [NSString stringWithUTF8String:e] : @"The machine is not running.";
+    return (e && e[0]) ? nsstr(e) : @"The machine is not running.";
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note
 {
     (void)note;
 
-    /* The 100x246 picture at the TV's 4:3, three times its 246 lines high:
-     * 984x738, a comfortable first window on any Mac. */
+    /* The 360x243 picture at the TV's 4:3, three times its 243 lines high:
+     * 972x729, a comfortable first window on any Mac. */
     _window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 984, 738)
+        initWithContentRect:NSMakeRect(0, 0, 972, 729)
                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
                     backing:NSBackingStoreBuffered
@@ -184,6 +191,9 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     _content.owner = self;
     [_content setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [_content registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    /* layer-backed, so the display's layer and the labels over it composite
+     * in the order they were added */
+    [_content setWantsLayer:YES];
 
     _display = [[O2DisplayView alloc] initWithSession:_session];
     [_display setFrame:[_content bounds]];
@@ -204,15 +214,33 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     [_toast setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [_content addSubview:_toast];
 
+    /* The banner: what is missing, along the bottom, until it is imported. A
+     * click goes to Import BIOS. */
+    _banner = [NSButton buttonWithTitle:@"" target:self action:@selector(importBios:)];
+    [_banner setBordered:NO];
+    [_banner setWantsLayer:YES];
+    _banner.layer.backgroundColor = [O2AccentColor() CGColor];
+    [_banner setFrame:NSMakeRect(0, 0, [_content bounds].size.width, BANNER_H)];
+    [_banner setAutoresizingMask:NSViewWidthSizable];
+    [_banner setHidden:YES];
+    [_content addSubview:_banner];
+
     [_window setContentView:_content];
     [self buildMenu];
     [_window makeKeyAndOrderFront:nil];
     [_window makeFirstResponder:_content];
     [_window setDelegate:self];
+    [_display updateVisibility];
 
-    /* A file from the command line or from Finder is routed as a drop: a
-     * cartridge boots straight away; a BIOS, or anything for the SD folder,
-     * is handled once the machine is up. */
+    __weak O2AppDelegate *weakSelf = self;
+    _controllers = [[O2ControllersWindow alloc] initWithSession:_session
+                                                        appKeys:^BOOL(uint32_t ks) {
+        return [weakSelf handleAppKey:ks];
+    }];
+
+    /* A file from the command line or from Finder is routed as a drop is: it
+     * waits for the machine to be up, then a cartridge boots, a ROM is
+     * imported, anything else goes to the SD folder. */
     NSString *media = _pendingMedia;
     if (!media && _mediaPath)
         media = [[NSFileManager defaultManager] stringWithFileSystemRepresentation:_mediaPath
@@ -221,11 +249,6 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 
     o2session_start_opts opts;
     o2session_default_opts(_session, &opts);
-    if (media && !o2session_media_is_bios([media fileSystemRepresentation]) &&
-        o2session_media_is_cartridge([media fileSystemRepresentation])) {
-        opts.cart_path = [media fileSystemRepresentation];
-        media = nil;
-    }
     if (o2session_start(_session, &opts) != 0) {
         NSAlert *a = [[NSAlert alloc] init];
         [a setMessageText:@"Could not start"];
@@ -234,33 +257,38 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     }
     _launched = YES;
     _toastGeneration = o2session_gamepad_generation(_session);
-    if (media) [self loadMedia:media];
+    if (media) [self loadMediaPaths:@[media]];
 
     /* The family's launch hooks, for when the app misbehaves before a menu
      * is reachable. */
-    if (getenv("O2_OPEN_KEYPAD")) [O2KeypadWindow toggleWithSession:_session];
+    if (getenv("O2_OPEN_CONTROLLERS")) [_controllers toggle];
     if (getenv("O2_OPEN_DEBUGGER")) [O2DebuggerWindow showForSession:_session];
     if (getenv("O2_OPEN_SETTINGS")) [self showSettings:nil];
 
     _statusTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES
-        block:^(NSTimer *t) { (void)t; [self updateTitle]; }];
+        block:^(NSTimer *t) { (void)t; [weakSelf updateTitle]; }];
+    _statusTimer.tolerance = 0.5;
     /* System actions the gamepad thread resolved (it cannot touch AppKit),
-     * gamepads coming and going, and a game that needs the BIOS. */
+     * gamepads coming and going, and what the running machine is missing. */
     _sysactTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES
         block:^(NSTimer *t) {
             (void)t;
+            O2AppDelegate *s = weakSelf;
+            if (!s) return;
             int sa;
-            while (o2session_sysaction_take(self->_session, &sa)) [self runSysaction:sa];
-            const unsigned gen = o2session_gamepad_generation(self->_session);
-            if (gen != self->_toastGeneration) {
-                self->_toastGeneration = gen;
+            while (o2session_sysaction_take(s->_session, &sa)) [s runSysaction:sa];
+            const unsigned gen = o2session_gamepad_generation(s->_session);
+            if (gen != s->_toastGeneration) {
+                s->_toastGeneration = gen;
                 char msg[160];
-                if (o2session_gamepad_last_event(self->_session, msg, sizeof msg) > 0)
-                    [self showToast:[NSString stringWithUTF8String:msg]];
+                if (o2session_gamepad_last_event(s->_session, msg, sizeof msg) > 0)
+                    [s showToast:nsstr(msg)];
             }
-            [self checkNeedsBios];
+            [s checkMissing];
         }];
+    _sysactTimer.tolerance = 0.05;
     [self updateTitle];
+    [self checkMissing];
 }
 
 - (void)showToast:(NSString *)text
@@ -280,27 +308,65 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     });
 }
 
-/* CONFIG network-booted a game while no BIOS is imported: the stand-in has
- * parked the console. Said once, as a sheet on the machine's window, until
- * the next power cycle clears it and a game trips it again. */
-- (void)checkNeedsBios
+/* ---- what the machine is missing ----------------------------------------------------- */
+
+/* The strip along the bottom: the character set (text is blank without it)
+ * and The Voice's ROMs. Only touched when the mask changes. */
+- (void)updateBanner:(unsigned)missing
 {
-    if (!o2session_needs_bios(_session)) {
+    const unsigned mask = missing & (O2_MISSING_FONT | O2_MISSING_VOICE);
+    if (mask == _bannerMask) return;
+    _bannerMask = mask;
+    NSString *text = nil;
+    if ((mask & O2_MISSING_FONT) && (mask & O2_MISSING_VOICE))
+        text = @"Character set and The Voice's ROMs not imported -- text will be blank. Import BIOS…";
+    else if (mask & O2_MISSING_FONT)
+        text = @"Character set not imported -- text will be blank. Import BIOS…";
+    else if (mask & O2_MISSING_VOICE)
+        text = @"The Voice's speech ROMs are not imported -- it will be silent. Import BIOS…";
+    if (!text) {
+        [_banner setHidden:YES];
+        return;
+    }
+    NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
+    para.alignment = NSTextAlignmentCenter;
+    [_banner setAttributedTitle:[[NSAttributedString alloc] initWithString:text attributes:@{
+        NSFontAttributeName: [NSFont boldSystemFontOfSize:12],
+        NSForegroundColorAttributeName: NSColor.whiteColor,
+        NSParagraphStyleAttributeName: para }]];
+    [_banner setHidden:NO];
+}
+
+/* A game met the stand-in (CONFIG network-booted it with no BIOS imported):
+ * the console is parked. Said once, as a sheet on the machine's window, until
+ * the next power cycle clears it and a game trips it again. */
+- (void)checkMissing
+{
+    const unsigned missing = o2session_missing(_session);
+    [self updateBanner:missing];
+    if (!(missing & O2_MISSING_BIOS)) {
         _needsBiosShown = NO;
         return;
     }
     if (_needsBiosShown) return;
     _needsBiosShown = YES;
+    [self askForRoms:nil title:@"This cartridge needs the Odyssey 2 BIOS"];
+}
 
+/* The alert for a ROM the machine needs: Import BIOS… picks the files (and
+ * retries the refused cartridge, or restarts into CONFIG), Not Now leaves it. */
+- (void)askForRoms:(NSString *)detail title:(NSString *)title
+{
     NSAlert *a = [[NSAlert alloc] init];
-    a.messageText = @"This cartridge needs the Magnavox Odyssey 2 BIOS";
-    a.informativeText = @"Odyssey 2 games are written in the BIOS's own byte-code, so only the real BIOS "
-                         "runs them; CONFIG and FujiNet apps run without it. Import your own dump of the "
-                         "BIOS and the console restarts into CONFIG.";
+    a.messageText = title;
+    a.informativeText = detail.length ? detail
+        : @"Machine ▸ Import BIOS… adds your own dump of it. Odyssey 2 games are written for the "
+           "real BIOS, so only it runs them; CONFIG and the FujiNet apps run without it.";
     [a addButtonWithTitle:@"Import BIOS…"];
     [a addButtonWithTitle:@"Not Now"];
     [a beginSheetModalForWindow:_window completionHandler:^(NSModalResponse r) {
-        if (r == NSAlertFirstButtonReturn) [self importBiosAndReset];
+        if (r != NSAlertFirstButtonReturn) return;
+        dispatch_async(dispatch_get_main_queue(), ^{ [self importRomsFromPanel:NO]; });
     }];
 }
 
@@ -308,6 +374,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 {
     switch (sa) {
     case O2_SYSACT_RESET_CONFIG:
+        _refusedCart = nil;
         o2session_sysaction(_session, sa);
         break;
     case O2_SYSACT_DEBUG_STOP:
@@ -317,6 +384,18 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     default: break;
     }
     [self updateTitle];
+}
+
+/* F9, F11 and F12 are the app's, not bindable; then a key bound to a system
+ * action. YES when taken. */
+- (BOOL)handleAppKey:(uint32_t)ks
+{
+    if (ks == O2_KEYSYM_F9) { [_controllers toggle]; return YES; }
+    if (ks == O2_KEYSYM_F11) { [_window toggleFullScreen:nil]; return YES; }
+    if (ks == O2_KEYSYM_F12) { [O2DebuggerWindow toggleForSession:_session]; return YES; }
+    const int sa = o2session_key_sysaction(_session, ks);
+    if (sa >= 0) { [self runSysaction:sa]; return YES; }
+    return NO;
 }
 
 - (void)updateTitle
@@ -333,12 +412,13 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
                  linkUp > 0 ? @"● " : (linkUp == 0 ? @"○ " : @""), st];
         const char *cart = o2session_cart_path(_session);
         if (cart && cart[0])
-            state = [NSString stringWithFormat:@"%@ — %@",
-                     [[NSString stringWithUTF8String:cart] lastPathComponent], state];
+            state = [NSString stringWithFormat:@"%@ — %@", [nsstr(cart) lastPathComponent], state];
+        if (o2session_is_paused(_session)) state = [state stringByAppendingString:@" — Paused"];
     }
     /* The title bar is the status bar here: an AppKit window has no natural
      * place for one, and a floating HUD over the picture would be worse. */
-    [_window setTitle:[NSString stringWithFormat:@"%@ — %@", APP_TITLE, state]];
+    NSString *title = [NSString stringWithFormat:@"%@ — %@", APP_TITLE, state];
+    if (![[_window title] isEqualToString:title]) [_window setTitle:title];
 }
 
 /* Losing key status with keys held would leave the machine believing they
@@ -359,7 +439,6 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     (void)note;
     [_statusTimer invalidate];
     [_sysactTimer invalidate];
-    [_settingsTimer invalidate];
     [_logTimer invalidate];
     [_display stop];
     o2session_stop(_session);
@@ -377,11 +456,11 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
         _pendingMedia = filename;
         return YES;
     }
-    [self loadMedia:filename];
+    [self loadMediaPaths:@[filename]];
     return YES;
 }
 
-/* ---- menu ------------------------------------------------------------------ */
+/* ---- menu ------------------------------------------------------------------------- */
 
 - (NSMenuItem *)item:(NSMenu *)menu title:(NSString *)title action:(SEL)sel key:(NSString *)key
 {
@@ -416,27 +495,29 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     [self item:machine title:@"Eject Cartridge" action:@selector(ejectCart:) key:@""];
     [self item:machine title:@"Import Cartridge to SD…" action:@selector(importToSd:) key:@""];
     [self item:machine title:@"Import BIOS…" action:@selector(importBios:) key:@""];
+    [self item:machine title:@"Import BIOS from a Folder…" action:@selector(importBiosFolder:) key:@""];
     [machine addItem:[NSMenuItem separatorItem]];
-    /* F3 and Escape are bindings (the console's CLEAR button, Reset to
-     * CONFIG), not key equivalents: a menu equivalent would take the key
-     * before the bindings table sees it and could not be remapped. The
-     * titles name whatever key is bound now (see validateMenuItem:). */
-    [self item:machine title:@"CLEAR" action:@selector(clearButton:) key:@""];
+    [self item:machine title:@"Pause" action:@selector(togglePause:) key:@""];
+    /* F1 and Escape are bindings (the console's RESET key, Reset to CONFIG),
+     * not key equivalents: a menu equivalent would take the key before the
+     * bindings table sees it and could not be remapped. The titles name
+     * whatever key is bound now (see validateMenuItem:). */
+    [self item:machine title:@"Reset" action:@selector(resetConsole:) key:@""];
     [self item:machine title:@"Reset to CONFIG" action:@selector(resetConfig:) key:@"r"];
     [machineItem setSubmenu:machine];
     [bar addItem:machineItem];
 
     NSMenuItem *viewItem = [[NSMenuItem alloc] init];
     NSMenu *view = [[NSMenu alloc] initWithTitle:@"View"];
-    [self item:view title:@"Keypad (F9)" action:@selector(toggleKeypad:) key:@"j"];
+    [self item:view title:@"Controllers (F9)" action:@selector(toggleControllers:) key:@"j"];
     [self item:view title:@"Debugger (F12)" action:@selector(toggleDebugger:) key:@"d"];
     [view addItem:[NSMenuItem separatorItem]];
     _aspectItem = [self item:view title:@"TV Aspect" action:@selector(toggleAspect:) key:@""];
     [_aspectItem setState:(o2session_get_int(_session, "aspect", 0) == 0 ? NSControlStateValueOn : NSControlStateValueOff)];
-    NSMenuItem *sm = [self item:view title:@"Smooth Scaling" action:@selector(toggleSmooth:) key:@""];
-    [sm setState:(o2session_get_int(_session, "smooth", 0) ? NSControlStateValueOn : NSControlStateValueOff)];
+    _smoothItem = [self item:view title:@"Smooth Scaling" action:@selector(toggleSmooth:) key:@""];
+    [_smoothItem setState:(o2session_get_int(_session, "smooth", 0) ? NSControlStateValueOn : NSControlStateValueOff)];
     /* F11 toggles it too, from the machine's window (see O2ContentView). */
-    NSMenuItem *fs = [view addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+    NSMenuItem *fs = [self item:view title:@"Enter Full Screen" action:@selector(toggleFullScreenWindow:) key:@"f"];
     [fs setKeyEquivalentModifierMask:NSEventModifierFlagControl | NSEventModifierFlagCommand];
     [viewItem setSubmenu:view];
     [bar addItem:viewItem];
@@ -470,7 +551,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     [NSApp setHelpMenu:help];
 }
 
-/* ---- actions ---------------------------------------------------------------- */
+/* ---- actions ------------------------------------------------------------------------ */
 
 - (void)alert:(NSString *)title text:(NSString *)text
 {
@@ -485,14 +566,16 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     (void)sender;
     NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
     para.alignment = NSTextAlignmentCenter;
-    NSString *text = @"Magnavox Odyssey 2 with built-in FujiNet\n\n"
+    NSString *text = @"Magnavox Odyssey 2 and Philips Videopac with built-in FujiNet\n\n"
                       WEBSITE_URL "\n"
                       "Report issues: " ISSUES_URL "\n\n"
                       "Licensed under the GNU General Public License, version 3 or later "
                       "(GPL-3.0-or-later).\n\n"
-                      "The emulator is MAME's Magnavox Odyssey 2, CDP1802 and CDP1861 drivers "
-                      "(Curt Coder, BSD-3-Clause), transposed to C. The FujiNet firmware and "
-                      "the cartridge: Thomas Cherryhomes and the FujiNet contributors.";
+                      "The emulator is MAME's Odyssey 2 / Videopac code -- the Intel 8048, the "
+                      "8244/8245 video chip, the EF9340/41 and The Voice's SP0256 (BSD-3-Clause; "
+                      "Peter Trauner, Wilbert Pol, hap, Couriersud, Joseph Zbiciak and others) -- "
+                      "transposed to C. The FujiNet firmware and the cartridge: Thomas Cherryhomes "
+                      "and the FujiNet contributors.";
     NSMutableAttributedString *credits = [[NSMutableAttributedString alloc]
         initWithString:text
             attributes:@{ NSFontAttributeName: [NSFont systemFontOfSize:NSFont.smallSystemFontSize],
@@ -506,52 +589,59 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     }
     [NSApp orderFrontStandardAboutPanelWithOptions:@{
         NSAboutPanelOptionApplicationName: APP_TITLE,
-        NSAboutPanelOptionApplicationVersion: [NSString stringWithUTF8String:O2_VERSION_STRING],
+        NSAboutPanelOptionApplicationVersion: nsstr(O2_VERSION_STRING),
         NSAboutPanelOptionVersion: @"",
         NSAboutPanelOptionCredits: credits,
     }];
 }
 
 /* A game while no BIOS is imported is refused with the reason: the session
- * says so, and the alert passes it on. */
+ * says so; when importing the missing ROM would fix it (its message points at
+ * Import BIOS), the alert offers that and the cartridge is retried after. */
 - (void)openCartAtPath:(NSString *)path
 {
-    if (o2session_load_cart(_session, [path fileSystemRepresentation]) != 0)
-        [self alert:@"Could not open" text:[self lastError]];
+    if (o2session_load_cart(_session, [path fileSystemRepresentation]) != 0) {
+        NSString *why = [self lastError];
+        if ([why containsString:@"Import BIOS"]) {
+            _refusedCart = path;
+            NSString *title = [why containsString:@"Voice"] ? @"This cartridge needs The Voice's ROMs"
+                            : [why containsString:@"G7400"] ? @"The Videopac+ G7400 needs its BIOS"
+                            : @"This cartridge needs the Odyssey 2 BIOS";
+            [self askForRoms:why title:title];
+        } else {
+            [self alert:@"Could not open" text:why];
+        }
+    } else {
+        _refusedCart = nil;
+    }
     [self updateTitle];
 }
 
-/* Whatever was imported, the session's message says what happened -- which
- * ROM it was, the custom-CRC warning, the next power cycle. Returns the
- * image's index, or -1. */
-- (int)importBiosAtPath:(NSString *)path
+/* Open, a drop, Finder, the command line: ROM images and zips are imported
+ * (together, one report), the first cartridge is opened, anything else goes
+ * on FujiNet's SD card. */
+- (void)loadMediaPaths:(NSArray<NSString *> *)paths
 {
-    char msg[512];
-    const int idx = o2session_import_bios(_session, [path fileSystemRepresentation], msg, sizeof msg);
-    [self alert:(idx >= 0 ? @"BIOS imported" : @"Import failed")
-           text:(msg[0] ? [NSString stringWithUTF8String:msg] : [self lastError])];
-    [self refreshMachineSettings];
-    return idx;
-}
-
-- (void)loadMedia:(NSString *)path
-{
-    const char *fs = [path fileSystemRepresentation];
-    if (o2session_media_is_bios(fs)) {
-        [self importBiosAtPath:path];
-        return;
+    NSMutableArray<NSString *> *roms = [NSMutableArray array];
+    NSString *cart = nil;
+    for (NSString *p in paths) {
+        const char *fs = [p fileSystemRepresentation];
+        if (o2session_media_is_rom(fs)) {
+            [roms addObject:p];
+        } else if (!cart && o2session_media_is_cartridge(fs)) {
+            cart = p;
+        } else {
+            char dest[1024];
+            if (o2session_import_media(_session, fs, dest, (int)sizeof dest) != 0) {
+                [self alert:@"Import failed" text:[self lastError]];
+                continue;
+            }
+            [self showToast:[NSString stringWithFormat:@"%@ copied to FujiNet's SD folder. Mount it from CONFIG.",
+                             [nsstr(dest) lastPathComponent]]];
+        }
     }
-    if (o2session_media_is_cartridge(fs)) {
-        [self openCartAtPath:path];
-        return;
-    }
-    char dest[1024];
-    if (o2session_import_media(_session, fs, dest, sizeof dest) != 0) {
-        [self alert:@"Import failed" text:[self lastError]];
-        return;
-    }
-    [self showToast:[NSString stringWithFormat:@"%@ copied to FujiNet's SD folder. Mount it from CONFIG.",
-                     [[NSString stringWithUTF8String:dest] lastPathComponent]]];
+    if ([roms count]) [self importRomPaths:roms];
+    if (cart) [self openCartAtPath:cart];
 }
 
 /* allName: offer an "All files" choice beside the filter, named so (an
@@ -588,18 +678,11 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     _panel.allowedContentTypes = sender.indexOfSelectedItem == 0 ? _panelTypes : @[];
 }
 
-/* .st2, the Odyssey 2's own format; or a raw image of up to 1K at $0400. */
+/* .bin, .rom or .o2: a raw image of the cartridge. */
 - (NSString *)pickCartridge:(NSString *)title
 {
-    return [self pickFile:title types:@[@"st2", @"bin", @"rom"] allFilesBeside:nil];
-}
-
-/* The 2K set, the 1K system ROM, or MAME's four 512-byte ROMs. */
-- (NSString *)pickBios
-{
-    return [self pickFile:@"Import BIOS"
-                    types:@[@"bin", @"rom", @"ic11", @"ic12", @"ic13", @"ic14"]
-           allFilesBeside:@"BIOS images (.bin .rom .ic11-.ic14)"];
+    return [self pickFile:title types:@[@"bin", @"rom", @"o2"]
+           allFilesBeside:@"Cartridge images (.bin .rom .o2)"];
 }
 
 - (void)openCart:(id)sender
@@ -612,6 +695,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 - (void)ejectCart:(id)sender
 {
     (void)sender;
+    _refusedCart = nil;
     if (o2session_eject(_session) != 0)
         [self alert:@"Could not eject" text:[self lastError]];
     [self updateTitle];
@@ -628,43 +712,91 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
         return;
     }
     [self showToast:[NSString stringWithFormat:@"%@ is on the SD host. Boot it from CONFIG.",
-                     [[NSString stringWithUTF8String:dest] lastPathComponent]]];
+                     [nsstr(dest) lastPathComponent]]];
 }
 
-/* The BIOS boots at the next power cycle. From Settings, that is the one the
- * window's closing does. */
-- (void)importBios:(id)sender
+/* ---- the ROMs ---------------------------------------------------------------------------- */
+
+/* Whatever was imported, the session's messages say what happened -- which ROM
+ * it was, an unrecognised dump of the right size, the next power cycle. A
+ * successful import takes effect at once when something was missing: the
+ * cartridge that was refused is opened again, or the console power-cycles
+ * (back onto the cartridge in the slot, or CONFIG). */
+- (void)importRomPaths:(NSArray<NSString *> *)paths
 {
-    NSString *path = [self pickBios];
-    if (!path) return;
-    const int idx = [self importBiosAtPath:path];
-    if (idx < 0 || sender != _biosImport) return;
-    _sessionDirty = YES;
-    [self refreshMachineSettings];
+    NSMutableArray<NSString *> *log = [NSMutableArray array];
+    int imported = 0;
+    for (NSString *p in paths) {
+        char msg[2048];
+        msg[0] = '\0';
+        const int n = o2session_rom_import(_session, [p fileSystemRepresentation], msg, (int)sizeof msg);
+        if (n > 0) imported += n;
+        if (msg[0]) [log addObject:nsstr(msg)];
+    }
+    [_settings refresh];
+    NSString *text = [log count] ? [log componentsJoinedByString:@"\n"]
+                                 : (imported > 0 ? @"Imported." : @"None of these files is a ROM this app uses.");
+    [self alert:(imported > 0 ? @"BIOS Imported" : @"Nothing Imported") text:text];
+    if (imported <= 0) return;
+
+    if (_refusedCart) {
+        NSString *cart = _refusedCart;
+        _refusedCart = nil;
+        [self openCartAtPath:cart];
+    } else if (o2session_missing(_session)) {
+        if (o2session_restart(_session) != 0)
+            [self alert:@"Could not start" text:[self lastError]];
+        else
+            [self showToast:@"The console was power-cycled with the new ROMs."];
+    }
+    [self updateTitle];
+    [self checkMissing];
 }
 
-/* The "needs the BIOS" alert's action: import, then the power cycle that
- * boots it -- Reset to CONFIG, so the game can be chosen again. */
-- (void)importBiosAndReset
+/* Machine > Import BIOS… (files and zips, any number) and Import BIOS from a
+ * Folder…: the ROMs are recognised by checksum, so the files may be called
+ * anything. */
+- (void)importRomsFromPanel:(BOOL)folder
 {
-    NSString *path = [self pickBios];
-    if (!path || [self importBiosAtPath:path] < 0) return;
-    if (o2session_reset_to_config(_session) != 0)
-        [self alert:@"Could not start" text:[self lastError]];
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    [panel setMessage:folder ? @"Import BIOS from a Folder (MAME's ROM folder works)"
+                             : @"Import BIOS: ROM images or zips (MAME's videopac.zip and i8244.zip work)"];
+    [panel setCanChooseDirectories:folder];
+    [panel setCanChooseFiles:!folder];
+    [panel setAllowsMultipleSelection:!folder];
+    NSWindow *host = [NSApp keyWindow] ?: _window;
+    [panel beginSheetModalForWindow:host completionHandler:^(NSModalResponse r) {
+        if (r != NSModalResponseOK) return;
+        NSMutableArray<NSString *> *paths = [NSMutableArray array];
+        for (NSURL *u in [panel URLs]) [paths addObject:[u path]];
+        /* after the sheet: what came in is an alert of its own */
+        dispatch_async(dispatch_get_main_queue(), ^{ [self importRomPaths:paths]; });
+    }];
+}
+
+- (void)importBios:(id)sender { (void)sender; [self importRomsFromPanel:NO]; }
+- (void)importBiosFolder:(id)sender { (void)sender; [self importRomsFromPanel:YES]; }
+
+/* ---- the console ---------------------------------------------------------------------------- */
+
+- (void)togglePause:(id)sender
+{
+    (void)sender;
+    o2session_set_paused(_session, !o2session_is_paused(_session));
     [self updateTitle];
 }
 
-/* Pressed and released over a few frames by the session: the console
- * samples CLEAR once a frame, so an instant's press would never be seen. */
-- (void)clearButton:(id)sender
+/* The console's RESET key: pressed and released over a few frames by the
+ * session, as the console samples it once a frame. */
+- (void)resetConsole:(id)sender
 {
     (void)sender;
-    o2session_clear(_session);
+    o2session_reset(_session);
 }
 
 - (void)resetConfig:(id)sender { (void)sender; [self runSysaction:O2_SYSACT_RESET_CONFIG]; }
 
-/* "CLEAR (F3)": the key bound to a target now, if any. */
+/* "Reset (F1)": the key bound to a target now, if any. */
 - (NSString *)title:(NSString *)base forTarget:(int)target
 {
     char key[32];
@@ -673,17 +805,21 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     return [NSString stringWithFormat:@"%@ (%s)", base, key];
 }
 
-/* The console items' titles follow the bindings (the Keypad panel remaps
- * them). */
+/* The console items' titles follow the bindings (the Controllers panel
+ * remaps them). */
 - (BOOL)validateMenuItem:(NSMenuItem *)item
 {
     const SEL a = [item action];
-    if (a == @selector(clearButton:)) {
-        [item setTitle:[self title:@"CLEAR" forTarget:O2_TARGET_SWITCH(O2_SW_CLEAR)]];
+    if (a == @selector(resetConsole:)) {
+        [item setTitle:[self title:@"Reset" forTarget:O2_TARGET_SWITCH(O2_SW_RESET)]];
         return o2session_is_running(_session);
     }
     if (a == @selector(resetConfig:)) {
         [item setTitle:[self title:@"Reset to CONFIG" forTarget:O2_TARGET_SYSACT(O2_SYSACT_RESET_CONFIG)]];
+        return o2session_is_running(_session);
+    }
+    if (a == @selector(togglePause:)) {
+        [item setState:(o2session_is_paused(_session) ? NSControlStateValueOn : NSControlStateValueOff)];
         return o2session_is_running(_session);
     }
     if (a == @selector(ejectCart:))
@@ -691,8 +827,9 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     return YES;
 }
 
-- (void)toggleKeypad:(id)sender { (void)sender; [O2KeypadWindow toggleWithSession:_session]; }
+- (void)toggleControllers:(id)sender { (void)sender; [_controllers toggle]; }
 - (void)toggleDebugger:(id)sender { (void)sender; [O2DebuggerWindow toggleForSession:_session]; }
+- (void)toggleFullScreenWindow:(id)sender { (void)sender; [_window toggleFullScreen:nil]; }
 
 /* aspect 0: the TV's 4:3 (the default); 1: square pixels. */
 - (void)setAspect:(int)aspect
@@ -700,7 +837,15 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     o2session_set_int(_session, "aspect", aspect);
     [_display setTvAspect:aspect == 0];
     [_aspectItem setState:(aspect == 0 ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (_aspectPopup) [_aspectPopup selectItemAtIndex:aspect];
+    [_settings syncDisplay];
+}
+
+- (void)setSmooth:(BOOL)on
+{
+    o2session_set_int(_session, "smooth", on ? 1 : 0);
+    [_display setSmooth:on];
+    [_smoothItem setState:(on ? NSControlStateValueOn : NSControlStateValueOff)];
+    [_settings syncDisplay];
 }
 
 - (void)toggleAspect:(id)sender
@@ -711,273 +856,63 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 
 - (void)toggleSmooth:(id)sender
 {
-    NSMenuItem *item = sender;
-    const BOOL on = ([item state] != NSControlStateValueOn);
-    [item setState:(on ? NSControlStateValueOn : NSControlStateValueOff)];
-    [_display setSmooth:on];
-    o2session_set_int(_session, "smooth", on ? 1 : 0);
-}
-
-/* ---- settings ----------------------------------------------------------------
- *
- * Same keys and defaults as the other frontends' Preferences, so a machine
- * configured in one comes up the same in another. The analog stick, the
- * picture and the volume apply live; the BIOS choice power-cycles the
- * machine, and the host options restart the session, when the window closes
- * (o2session_restart does whichever the changes need).
- */
-
-- (NSTextField *)sectionLabel:(NSString *)title
-{
-    NSTextField *label = [NSTextField labelWithString:title];
-    label.font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
-    return label;
-}
-
-- (NSTextField *)note:(NSString *)text
-{
-    NSTextField *n = [NSTextField labelWithString:text];
-    n.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
-    n.textColor = NSColor.secondaryLabelColor;
-    return n;
-}
-
-- (NSButton *)checkBoxForKey:(const char *)key title:(NSString *)title fallback:(int)def
-{
-    NSButton *box = [NSButton checkboxWithTitle:title target:self action:@selector(settingChanged:)];
-    box.state = o2session_get_int(_session, key, def) ? NSControlStateValueOn : NSControlStateValueOff;
-    box.identifier = @(key);
-    return box;
-}
-
-/* What the BIOS row says: which images are imported, or that none is and
- * what that means. */
-- (NSString *)biosStatusText
-{
-    if (!o2session_have_bios(_session))
-        return @"Not imported — CONFIG and FujiNet apps run without it; games need it";
-    BOOL set2k = NO, system1k = NO;
-    for (int i = 0; i < o2session_bios_count(); i++) {
-        const o2_bios_info *b = o2session_bios_info(i);
-        if (!b || !o2session_bios_available(_session, i)) continue;
-        if (!strcmp(b->name, "o2")) set2k = YES;
-        else if (!strcmp(b->name, "system")) system1k = YES;
-    }
-    if (set2k) return @"Imported (2K set)";
-    if (system1k) return @"Imported (1K system ROM)";
-    return @"Imported (MAME's 512-byte ROMs)";
-}
-
-- (void)refreshMachineSettings
-{
-    if (!_settingsWindow) return;
-    _biosStatus.stringValue = [self biosStatusText];
-}
-
-- (void)refreshPadList
-{
-    const NSInteger sel = _padList.indexOfSelectedItem;
-    [_padList removeAllItems];
-    const int n = o2session_gamepad_count(_session);
-    if (n == 0) [_padList addItemWithTitle:@"(no gamepads connected)"];
-    for (int i = 0; i < n; i++) {
-        char name[128];
-        const int eff = o2session_gamepad_effective_port(_session, i);
-        o2session_gamepad_name(_session, i, name, sizeof name);
-        /* Menu items with equal titles collapse; the index keeps them apart. */
-        [_padList addItemWithTitle:(eff >= 0
-            ? [NSString stringWithFormat:@"%d: %s  [keypad %c]", i + 1, name, 'A' + eff]
-            : [NSString stringWithFormat:@"%d: %s  [unused]", i + 1, name])];
-    }
-    if (sel >= 0 && sel < n) [_padList selectItemAtIndex:sel];
-    [self padSelected:nil];
-}
-
-- (void)padSelected:(id)sender
-{
     (void)sender;
-    const NSInteger sel = _padList.indexOfSelectedItem;
-    if (sel >= 0 && sel < o2session_gamepad_count(_session))
-        [_padPort selectItemAtIndex:o2session_gamepad_assignment(_session, (int)sel) + 1];
+    [self setSmooth:o2session_get_int(_session, "smooth", 0) == 0];
 }
 
-- (void)padPortChanged:(id)sender
-{
-    (void)sender;
-    const NSInteger sel = _padList.indexOfSelectedItem;
-    if (sel >= 0 && sel < o2session_gamepad_count(_session))
-        o2session_gamepad_assign(_session, (int)sel, (int)_padPort.indexOfSelectedItem - 1);
-    [self refreshPadList];
-}
-
-- (void)volumeChanged:(NSSlider *)sender
-{
-    o2session_set_volume(_session, (int)sender.integerValue);
-}
-
-- (void)aspectChanged:(NSPopUpButton *)sender
-{
-    [self setAspect:(int)sender.indexOfSelectedItem];
-}
-
-- (void)refreshWebUi
-{
-    if (!_webUiLabel) return;
-    const char *url = o2session_fujinet_webui_url(_session);
-    _webUiLabel.stringValue = o2session_fujinet_external(_session)
-        ? @"(FujiNet is external)"
-        : (o2session_fujinet_running(_session) && url && url[0])
-            ? [NSString stringWithUTF8String:url] : @"(FujiNet is not running)";
-}
-
-/* The external-FujiNet address field: valid text (or none, meaning
- * 127.0.0.1:11520) is saved; anything else is shown in red and not saved. */
-- (void)externalAddrChanged:(id)sender
-{
-    NSTextField *field = sender;
-    NSString *text = [field.stringValue
-        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    char host[64];
-    int port;
-    if (o2session_parse_hostport(text.UTF8String, host, sizeof host, &port) != 0) {
-        field.textColor = NSColor.systemRedColor;
-        return;
-    }
-    field.textColor = NSColor.controlTextColor;
-    o2session_set_str(_session, "fujinet_external_addr", text.UTF8String);
-    _sessionDirty = YES;
-}
-
-- (void)settingChanged:(id)sender
-{
-    NSButton *box = sender;
-    const char *key = [box.identifier UTF8String];
-    const int value = box.state == NSControlStateValueOn ? 1 : 0;
-
-    if (!strcmp(key, "analog_joystick")) {
-        o2session_set_analog(_session, value);
-        return;
-    }
-    o2session_set_int(_session, key, value);
-    _sessionDirty = YES;
-    if (!strcmp(key, "fujinet_external")) _externalField.enabled = value != 0;
-}
+/* ---- settings ------------------------------------------------------------------------------- */
 
 - (void)showSettings:(id)sender
 {
     (void)sender;
-    if (_settingsWindow) {
-        [self refreshMachineSettings];
-        [self refreshWebUi];
-        [self startSettingsTimer];
-        [_settingsWindow makeKeyAndOrderFront:nil];
-        return;
-    }
-
-    _biosStatus = [NSTextField wrappingLabelWithString:@""];
-    _biosStatus.preferredMaxLayoutWidth = 340;
-    _biosImport = [NSButton buttonWithTitle:@"Import BIOS…" target:self action:@selector(importBios:)];
-    NSStackView *biosRow = [NSStackView stackViewWithViews:@[_biosStatus, _biosImport]];
-    biosRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    biosRow.alignment = NSLayoutAttributeCenterY;
-
-    _padList = [[NSPopUpButton alloc] init];
-    _padList.target = self;
-    _padList.action = @selector(padSelected:);
-    _padPort = [[NSPopUpButton alloc] init];
-    [_padPort addItemsWithTitles:@[@"Automatic", @"Keypad A", @"Keypad B"]];
-    _padPort.target = self;
-    _padPort.action = @selector(padPortChanged:);
-
-    _aspectPopup = [[NSPopUpButton alloc] init];
-    [_aspectPopup addItemsWithTitles:@[@"TV (4:3)", @"Square pixels"]];
-    [_aspectPopup selectItemAtIndex:(o2session_get_int(_session, "aspect", 0) ? 1 : 0)];
-    _aspectPopup.target = self;
-    _aspectPopup.action = @selector(aspectChanged:);
-
-    NSSlider *volume = [NSSlider sliderWithValue:o2session_get_int(_session, "volume", 100)
-                                        minValue:0 maxValue:100 target:self action:@selector(volumeChanged:)];
-    [volume.widthAnchor constraintEqualToConstant:220].active = YES;
-
-    NSStackView *padRow = [NSStackView stackViewWithViews:@[_padList, _padPort]];
-    padRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-
-    _externalField = [NSTextField textFieldWithString:
-        @(o2session_get_str(_session, "fujinet_external_addr", ""))];
-    _externalField.placeholderString = @"127.0.0.1:11520";
-    _externalField.preferredMaxLayoutWidth = 240;
-    _externalField.enabled = o2session_get_int(_session, "fujinet_external", 0) != 0;
-    _externalField.target = self;
-    _externalField.action = @selector(externalAddrChanged:);
-    [_externalField.cell setSendsActionOnEndEditing:YES];
-
-    _webUiLabel = [NSTextField labelWithString:@""];
-    _webUiLabel.selectable = YES;
-    NSButton *webUiOpen = [NSButton buttonWithTitle:@"Open" target:self action:@selector(openWebUI:)];
-    NSStackView *webUiRow = [NSStackView stackViewWithViews:@[_webUiLabel, webUiOpen]];
-    webUiRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-
-    NSArray<NSArray<NSView *> *> *rows = @[
-        @[ [self sectionLabel:@"Machine"], [self note:@"the BIOS applies with a power cycle when this window closes"] ],
-        @[ [NSTextField labelWithString:@"BIOS"], biosRow ],
-        @[ [NSTextField labelWithString:@""],
-           [self checkBoxForKey:"use_bios" title:@"Use the imported BIOS" fallback:1] ],
-        @[ [NSTextField labelWithString:@""],
-           [self note:@"off: the app's own stand-in always, which runs CONFIG and FujiNet apps but no games"] ],
-        @[ [self sectionLabel:@"Display"], [self note:@"applied immediately"] ],
-        @[ [NSTextField labelWithString:@"Picture"], _aspectPopup ],
-        @[ [self sectionLabel:@"Audio"], [self note:@"the volume applies immediately; audio on/off restarts the session"] ],
-        @[ [NSTextField labelWithString:@""], [self checkBoxForKey:"enable_audio" title:@"Audio" fallback:1] ],
-        @[ [NSTextField labelWithString:@"Volume"], volume ],
-        @[ [self sectionLabel:@"Input"], [self note:@"applied immediately; gamepads on/off restarts the session"] ],
-        @[ [NSTextField labelWithString:@""],
-           [self checkBoxForKey:"analog_joystick" title:@"Analog sticks steer too" fallback:1] ],
-        @[ [NSTextField labelWithString:@""], [self checkBoxForKey:"enable_gamepad" title:@"Gamepads" fallback:1] ],
-        @[ [NSTextField labelWithString:@"Gamepads"], padRow ],
-        @[ [self sectionLabel:@"FujiNet"], [self note:@"applied by restarting the session when this window closes"] ],
-        @[ [NSTextField labelWithString:@""], [self checkBoxForKey:"enable_fujinet" title:@"Enable FujiNet" fallback:1] ],
-        @[ [NSTextField labelWithString:@""], [self checkBoxForKey:"fujinet_external" title:@"Use external FujiNet" fallback:0] ],
-        @[ [NSTextField labelWithString:@"Address:port"], _externalField ],
-        @[ [NSTextField labelWithString:@"Web UI"], webUiRow ],
-    ];
-
-    NSGridView *grid = [NSGridView gridViewWithViews:rows];
-    grid.rowSpacing = 8;
-    grid.columnSpacing = 12;
-    [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
-
-    NSStackView *root = [NSStackView stackViewWithViews:@[grid]];
-    root.orientation = NSUserInterfaceLayoutOrientationVertical;
-    root.alignment = NSLayoutAttributeLeading;
-    root.edgeInsets = NSEdgeInsetsMake(16, 16, 16, 16);
-
-    _settingsWindow = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, 640, 580)
-                  styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                    backing:NSBackingStoreBuffered
-                      defer:NO];
-    _settingsWindow.title = @"Settings";
-    _settingsWindow.releasedWhenClosed = NO;
-    _settingsWindow.delegate = self;
-    _settingsWindow.contentView = root;
-    [_settingsWindow center];
-
-    [self refreshMachineSettings];
-    [self refreshWebUi];
-    [self startSettingsTimer];
-    [_settingsWindow makeKeyAndOrderFront:nil];
+    if (!_settings) _settings = [[O2SettingsWindow alloc] initWithSession:_session delegate:self];
+    [_settings show];
 }
 
-- (void)startSettingsTimer
+- (void)settingsSetAspect:(int)aspect { [self setAspect:aspect]; }
+- (void)settingsSetSmooth:(BOOL)smooth { [self setSmooth:smooth]; }
+- (void)settingsImportRoms:(BOOL)folder { [self importRomsFromPanel:folder]; }
+- (void)settingsOpenWebUI { [self openWebUI:nil]; }
+
+/* A power cycle for the machine options, a full restart if a host option
+ * changed: the session knows which. */
+- (void)settingsClosed:(BOOL)needsRestart
 {
-    [_settingsTimer invalidate];
-    _padGeneration = o2session_gamepad_generation(_session);
-    [self refreshPadList];
-    _settingsTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
-        (void)t;
-        const unsigned gen = o2session_gamepad_generation(self->_session);
-        if (gen != self->_padGeneration) { self->_padGeneration = gen; [self refreshPadList]; }
-    }];
+    if (needsRestart) {
+        if (o2session_restart(_session) != 0)
+            [self alert:@"Could not start" text:[self lastError]];
+        else
+            [self showToast:@"Settings applied: the console was power-cycled."];
+    }
+    [_controllers refresh];
+    [self updateTitle];
+    [self checkMissing];
+}
+
+/* ---- FujiNet console log ----------------------------------------------------------------------- */
+
+- (void)refreshLog:(NSTimer *)timer
+{
+    (void)timer;
+    static char buf[128 * 1024];
+    const int n = o2session_fujinet_copy_log(_session, buf, sizeof buf);
+    NSString *text = n > 0 ? [NSString stringWithUTF8String:buf] : nil;
+    NSString *shown = text ?: @"(no FujiNet output yet)";
+    /* nothing new: leave the text, and the reader's place in it, alone */
+    if ([_logView.string isEqualToString:shown]) return;
+    NSScrollView *scroll = (NSScrollView *)_logView.enclosingScrollView;
+    const BOOL atEnd = !scroll || (NSMaxY(scroll.contentView.documentVisibleRect) >=
+                                   NSMaxY(((NSView *)scroll.documentView).frame) - 4.0);
+    [_logView setString:shown];
+    if (atEnd) [_logView scrollRangeToVisible:NSMakeRange(_logView.string.length, 0)];
+}
+
+- (void)startLogTimer
+{
+    if (_logTimer) return;
+    _logTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
+                                               selector:@selector(refreshLog:) userInfo:nil repeats:YES];
+    _logTimer.tolerance = 0.5;
 }
 
 - (void)windowWillClose:(NSNotification *)note
@@ -985,37 +920,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     if (note.object == _logWindow) {
         [_logTimer invalidate];
         _logTimer = nil;
-        return;
     }
-    if (note.object != _settingsWindow) return;
-    [_settingsWindow makeFirstResponder:nil]; /* commit a field edit */
-    [_settingsTimer invalidate];
-    _settingsTimer = nil;
-    if (!_sessionDirty) return;
-    _sessionDirty = NO;
-
-    /* A power cycle for the machine options, a full restart if a host
-     * option changed: the session knows which. */
-    if (o2session_restart(_session) != 0)
-        [self alert:@"Could not start" text:[self lastError]];
-    else
-        [self showToast:@"Settings applied: the console was power-cycled."];
-    [self updateTitle];
-}
-
-/* ---- FujiNet console log ------------------------------------------------------- */
-
-- (void)refreshLog:(NSTimer *)timer
-{
-    (void)timer;
-    static char buf[128 * 1024];
-    const int n = o2session_fujinet_copy_log(_session, buf, sizeof buf);
-    NSScrollView *scroll = (NSScrollView *)_logView.enclosingScrollView;
-    const BOOL atEnd = !scroll || (NSMaxY(scroll.contentView.documentVisibleRect) >=
-                                   NSMaxY(((NSView *)scroll.documentView).frame) - 4.0);
-    NSString *text = n > 0 ? [NSString stringWithUTF8String:buf] : nil;
-    [_logView setString:(text ?: @"(no FujiNet output yet)")];
-    if (atEnd) [_logView scrollRangeToVisible:NSMakeRange(_logView.string.length, 0)];
 }
 
 - (void)showFujiNetLog:(id)sender
@@ -1027,9 +932,8 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     }
     if (_logWindow) {
         [_logWindow makeKeyAndOrderFront:nil];
-        if (!_logTimer)
-            _logTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
-                                                       selector:@selector(refreshLog:) userInfo:nil repeats:YES];
+        [self startLogTimer];
+        [self refreshLog:nil];
         return;
     }
 
@@ -1056,8 +960,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     _logWindow.contentView = scroll;
     [_logWindow center];
 
-    _logTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self
-                                               selector:@selector(refreshLog:) userInfo:nil repeats:YES];
+    [self startLogTimer];
     [self refreshLog:nil];
     [_logWindow makeKeyAndOrderFront:nil];
 }
@@ -1073,7 +976,6 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
         [self alert:@"FujiNet is not running" text:nil];
         return;
     }
-    [[NSWorkspace sharedWorkspace] openURL:
-        [NSURL URLWithString:[NSString stringWithUTF8String:o2session_fujinet_webui_url(_session)]]];
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:nsstr(o2session_fujinet_webui_url(_session))]];
 }
 @end

@@ -17,6 +17,7 @@ typedef struct {
     GtkScrolledWindow *scroll;
     o2session *session;
     guint timer;
+    char *last;           /* the text last shown */
 } LogWindow;
 
 static void on_destroy(GtkWidget *w, gpointer user_data)
@@ -27,6 +28,7 @@ static void on_destroy(GtkWidget *w, gpointer user_data)
         g_source_remove(lw->timer);
         lw->timer = 0;
     }
+    g_free(lw->last);
     g_free(lw);
 }
 
@@ -48,17 +50,12 @@ static gboolean refresh(gpointer user_data)
     n = o2session_fujinet_copy_log(lw->session, buf, sizeof buf);
     {
         const char *text = n > 0 ? buf : "(no FujiNet output yet)";
-        GtkTextIter s, e;
-        char *old;
-        gboolean same;
 
-        /* nothing new: leave the buffer (and its relayout) alone */
-        gtk_text_buffer_get_bounds(b, &s, &e);
-        old = gtk_text_buffer_get_text(b, &s, &e, TRUE);
-        same = strcmp(old, text) == 0;
-        g_free(old);
-        if (same)
+        /* unchanged log: no re-layout of 128 KB of text */
+        if (lw->last && strcmp(lw->last, text) == 0)
             return G_SOURCE_CONTINUE;
+        g_free(lw->last);
+        lw->last = g_strdup(text);
         gtk_text_buffer_set_text(b, text, -1);
     }
 

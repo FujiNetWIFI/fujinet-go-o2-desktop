@@ -1,7 +1,8 @@
 /*
  * window.c -- the main window: the display, a header-bar menu, keyboard
- * capture, the console's CLEAR button, the "needs the BIOS" alert, gamepad
- * hot-plug toasts and the FujiNet status.
+ * capture, the console's RESET key, Import BIOS and the alerts and banners
+ * that say what the running configuration is missing, gamepad hot-plug
+ * toasts and the FujiNet status.
  *
  * Keyboard events are translated by hardware keycode (evdev, via the
  * session's HID table) rather than by GDK keyval, so a binding names the
@@ -9,9 +10,9 @@
  * same path the Qt, Win32 and AppKit frontends take, which is what lets one
  * tested table serve all four.
  *
- * The console's own button is a machine key, not a menu accelerator: F3 is
- * CLEAR through the bindings (MAME's key), so it can be remapped and a
- * gamepad's Start drives it too. The menu items name whatever key is bound
+ * The console's own RESET key is a machine key, not a menu accelerator: F1 is
+ * RESET through the bindings (MAME's key), so it can be remapped and a
+ * gamepad's button drives it too. The menu items name whatever key is bound
  * to them now.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
@@ -20,11 +21,11 @@
 
 #include "window.h"
 
+#include "controllers/controllers_window.h"
+#include "debugger/dbg_window.h"
 #include "display.h"
 #include "fujilog.h"
 #include "prefs.h"
-#include "debugger/dbg_window.h"
-#include "keypad/keypad_window.h"
 
 #include <string.h>
 
@@ -36,6 +37,8 @@ struct _O2Window {
     GtkWidget *toast_overlay;
     GtkWidget *status;          /* the FujiNet link indicator */
     GtkWidget *status_dot;
+    AdwBanner *banner_font;     /* "Character set not imported" */
+    AdwBanner *banner_voice;    /* "The Voice's speech ROMs are not imported" */
     GMenu *console_menu;        /* the Console section, relabelled live */
     char console_labels[256];   /* what it last showed */
     guint status_id;
@@ -58,22 +61,35 @@ void o2_window_toast(O2Window *self, const char *text)
 
 static GtkCssProvider *s_accent_css;
 
+/* The accent moved toward white by t, for text on a dark theme: the
+ * Odyssey's red is too dark to read as a thin line there. */
+static guint32 tint(guint32 rgb, double t)
+{
+    guint32 out = 0;
+    int s;
+    for (s = 16; s >= 0; s -= 8) {
+        double c = (rgb >> s) & 0xFF;
+        out |= (guint32)(c + (255 - c) * t + 0.5) << s;
+    }
+    return out;
+}
+
 static void load_accent_css(gboolean dark)
 {
     char buf[1024];
-    /* The tan is pale: it fills with dark text everywhere, and as a text
-     * colour it is only readable on a dark theme -- on a light one the
-     * darker tan stands in. */
+    /* White text sits on the red everywhere; as a text colour the red is
+     * only readable lightened on a dark theme, and the console's darker
+     * reset-key red stands in on a light one. */
     g_snprintf(buf, sizeof buf,
-        ".o2-accent { background: #%06x; color: #000000; }\n"
-        ".o2-accent:hover { background: shade(#%06x, 1.08); }\n"
+        ".o2-accent { background: #%06x; color: #ffffff; }\n"
+        ".o2-accent:hover { background: shade(#%06x, 1.12); }\n"
         ".o2-accent-text { color: #%06x; font-weight: bold; }\n"
         ".o2-pill { padding: 1px 8px; border-radius: 9px; font-weight: bold; }\n"
         ".o2-dot { border-radius: 6px; min-width: 12px; min-height: 12px; }\n"
         ".o2-dot-on { background: #%06x; }\n"
         ".o2-dot-off { background: #808080; }\n",
         O2SESSION_ACCENT_RGB, O2SESSION_ACCENT_RGB,
-        dark ? O2SESSION_ACCENT_RGB : O2SESSION_ACCENT_DARK_RGB,
+        dark ? tint(O2SESSION_ACCENT_RGB, 0.4) : O2SESSION_ACCENT_DARK_RGB,
         O2SESSION_ACCENT_RGB);
     gtk_css_provider_load_from_string(s_accent_css, buf);
 }
@@ -133,14 +149,28 @@ static gboolean ui_has_keyboard(O2Window *self)
     return focus && gtk_widget_get_ancestor(focus, GTK_TYPE_POPOVER) != NULL;
 }
 
-static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
-                               guint keycode, GdkModifierType state,
-                               gpointer user_data)
+gboolean o2_window_key(O2Window *self, guint keyval, guint keycode,
+                       GdkModifierType state, gboolean down)
 {
-    O2Window *self = user_data;
     guint32 keysym;
     int sa;
-    (void)ctrl;
+
+    if (!down) {
+        if (keyval == GDK_KEY_F9 || keyval == GDK_KEY_F11 || keyval == GDK_KEY_F12)
+            return TRUE;
+        keysym = keysym_of(keyval, keycode);
+        if (ui_has_keyboard(self)) {
+            /* still let go of a machine key held into the dialog */
+            o2session_key(self->session, keysym, 0);
+            return FALSE;
+        }
+        sa = o2session_key_sysaction(self->session, keysym);
+        if (sa >= 0) {
+            self->sysact_down[sa] = FALSE;
+            return TRUE;
+        }
+        return o2session_key(self->session, keysym, 0) ? TRUE : FALSE;
+    }
 
     if (ui_has_keyboard(self))
         return FALSE;
@@ -148,7 +178,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     /* The window's own keys, deliberately not bindable: they are how you
      * reach the panels that do the binding. */
     if (keyval == GDK_KEY_F9) {
-        o2_keypad_window_toggle(GTK_WINDOW(self), self->session);
+        o2_controllers_toggle(GTK_WINDOW(self), self->session);
         return TRUE;
     }
     if (keyval == GDK_KEY_F12) {
@@ -160,7 +190,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
         return TRUE;
     }
     /* The menu accelerators are all Ctrl. Alt is not a modifier here: Left
-     * Alt is keypad A's 0 (MAME's key), and a game may want it held while
+     * Alt is a machine key (MAME's), and a game may want it held while
      * another key is pressed. */
     if (state & GDK_CONTROL_MASK)
         return FALSE;
@@ -180,45 +210,40 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     return o2session_key(self->session, keysym, 1) ? TRUE : FALSE;
 }
 
+static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
+                               guint keycode, GdkModifierType state,
+                               gpointer user_data)
+{
+    (void)ctrl;
+    return o2_window_key(user_data, keyval, keycode, state, TRUE);
+}
+
 static gboolean on_key_released(GtkEventControllerKey *ctrl, guint keyval,
                                 guint keycode, GdkModifierType state,
                                 gpointer user_data)
 {
-    O2Window *self = user_data;
-    guint32 keysym;
-    int sa;
-    (void)ctrl; (void)state;
+    (void)ctrl;
+    return o2_window_key(user_data, keyval, keycode, state, FALSE);
+}
 
-    if (keyval == GDK_KEY_F9 || keyval == GDK_KEY_F11 || keyval == GDK_KEY_F12)
-        return TRUE;
-    keysym = keysym_of(keyval, keycode);
-    if (ui_has_keyboard(self)) {
-        /* still let go of a machine key held into the dialog */
-        o2session_key(self->session, keysym, 0);
-        return FALSE;
-    }
-    sa = o2session_key_sysaction(self->session, keysym);
-    if (sa >= 0) {
-        self->sysact_down[sa] = FALSE;
-        return TRUE;
-    }
-    return o2session_key(self->session, keysym, 0) ? TRUE : FALSE;
+void o2_window_release_keys(O2Window *self)
+{
+    o2session_release_all(self->session);
+    memset(self->sysact_down, 0, sizeof self->sysact_down);
 }
 
 /* Losing focus with keys held would leave the machine believing they are
  * still down. */
 static void on_focus_leave(GtkEventControllerFocus *ctrl, gpointer user_data)
 {
-    O2Window *self = user_data;
     (void)ctrl;
-    o2session_release_all(self->session);
-    memset(self->sysact_down, 0, sizeof self->sysact_down);
+    o2_window_release_keys(user_data);
 }
 
 /* ---- the Console menu: labels that follow the bindings ----------------------- */
 
-/* "CLEAR (F3)": the item's name and whatever key drives its target now (a
- * remap in the Keypad window shows here within a quarter second). The
+/* "Reset (F1)": the item's name and whatever key drives its target now (a
+ * remap in the Controllers window shows here within a quarter second). The
  * mnemonics are unique across the whole menu. */
 static void item_label(O2Window *self, char *dst, int dstsz, const char *name,
                        int target)
@@ -233,23 +258,21 @@ static void item_label(O2Window *self, char *dst, int dstsz, const char *name,
 
 static void sync_console_menu(O2Window *self)
 {
-    char clear[96], config[96], all[256];
+    char reset[96], all[256];
 
-    item_label(self, clear, sizeof clear, "_CLEAR",
-               O2_TARGET_SWITCH(O2_SW_CLEAR));
-    item_label(self, config, sizeof config, "Reset to CO_NFIG",
-               O2_TARGET_SYSACT(O2_SYSACT_RESET_CONFIG));
-    g_snprintf(all, sizeof all, "%s|%s", clear, config);
+    item_label(self, reset, sizeof reset, "_Reset", O2_TARGET_SWITCH(O2_SW_RESET));
+    g_snprintf(all, sizeof all, "%s", reset);
 
     if (strcmp(all, self->console_labels) == 0)
         return;
     g_strlcpy(self->console_labels, all, sizeof self->console_labels);
     g_menu_remove_all(self->console_menu);
-    g_menu_append(self->console_menu, clear, "win.clear");
-    g_menu_append(self->console_menu, config, "win.reset-config");
+    g_menu_append(self->console_menu, "_Pause", "win.pause");
+    g_menu_append(self->console_menu, reset, "win.reset");
+    g_menu_append(self->console_menu, "Reset to _CONFIG", "win.reset-config");
 }
 
-/* ---- the BIOS a game needs ------------------------------------------------------ */
+/* ---- messages and file pickers ---------------------------------------------------- */
 
 static void open_cart_path(O2Window *self, const char *path);
 
@@ -271,7 +294,7 @@ static GtkFileDialog *file_dialog(const char *title, const char *filter_name,
     GtkFileFilter *all = gtk_file_filter_new();
     int i;
 
-    /* suffixes match case-insensitively: GAME.ST2 is as good as game.st2 */
+    /* suffixes match case-insensitively: GAME.BIN is as good as game.bin */
     gtk_file_filter_set_name(images, filter_name);
     for (i = 0; suffixes[i]; i++)
         gtk_file_filter_add_suffix(images, suffixes[i]);
@@ -291,91 +314,195 @@ static GtkFileDialog *file_dialog(const char *title, const char *filter_name,
     return dlg;
 }
 
-/* The 2K set, the 1K system ROM, or MAME's four 512-byte ROMs. */
-static GtkFileDialog *bios_dialog(void)
+static const char *const k_cart_exts[] = { "bin", "rom", "o2", NULL };
+static const char *const k_bios_exts[] = { "bin", "rom", "zip", NULL };
+
+static int machine_now(O2Window *self)
 {
-    static const char *const exts[] = { "bin", "rom", "ic11", "ic12", "ic13", "ic14", NULL };
-    return file_dialog("Import BIOS",
-        "Magnavox Odyssey 2 BIOS images (*.bin, *.rom, *.ic11 \xe2\x80\x93 *.ic14)", exts, NULL);
+    int m = o2session_get_int(self->session, "machine", O2_MACHINE_ODYSSEY2);
+    return m >= 0 && m < O2_MACHINE_COUNT ? m : O2_MACHINE_ODYSSEY2;
 }
 
-/* Import BIOS says what it did in every case -- that it boots at the next
- * power cycle, that ic11 still wants ic12, or that its CRC is not one MAME
- * knows -- and that is worth more than a toast's few seconds. */
-int o2_show_bios_import(GtkWidget *over, o2session *session, const char *path)
+/* ---- Import BIOS ------------------------------------------------------------------- */
+
+/* Whether the import supplied something the running configuration was
+ * missing (the mask o2session_missing named before it). */
+static gboolean import_fixed_something(O2Window *self, unsigned missing)
 {
-    char msg[1024];
-    int idx = o2session_import_bios(session, path, msg, sizeof msg);
-    show_message(over, idx < 0 ? "Cannot Import BIOS" : "BIOS Imported",
-                 msg[0] ? msg : o2session_last_error(session));
-    return idx;
+    const int m = machine_now(self);
+    if ((missing & O2_MISSING_BIOS) && o2session_have_bios(self->session, m) &&
+        o2session_get_int(self->session, "use_bios", 1))
+        return TRUE;
+    if ((missing & O2_MISSING_FONT) && o2session_have_font(self->session, m))
+        return TRUE;
+    if ((missing & O2_MISSING_VOICE) && o2session_have_voice(self->session))
+        return TRUE;
+    return FALSE;
 }
 
-/* Import BIOS out of the "needs the BIOS" alert: once the console's system
- * ROM is complete, carry straight on -- open the refused cartridge again,
- * or (a game CONFIG booted from the network) power-cycle back to CONFIG on
- * the real BIOS, so booting the game again just works. Anything short of
- * that (half the system ROM, a bad file) is said in a dialog instead. */
-static void on_needed_bios_chosen(GObject *src, GAsyncResult *res, gpointer user_data)
+/* Imports every path in turn and says what happened, always: that it takes
+ * effect at the next power cycle, that a ROM's CRC is not one MAME knows, that
+ * nothing here was recognised. Returns the items taken. */
+static int import_paths(O2Window *self, GtkWidget *over, char *const *paths, int n,
+                        gboolean apply, const char *retry)
 {
-    O2Window *self = user_data;
-    g_autoptr(GFile) file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, NULL);
-    g_autofree char *path = NULL;
-    const char *retry = g_object_get_data(src, "retry");
-    char msg[1024];
-    int idx;
+    GString *log = g_string_new(NULL);
+    const unsigned missing = o2session_missing(self->session);
+    gboolean failed = FALSE;
+    int total = 0, i;
 
-    if (!file || !(path = g_file_get_path(file)))
-        return;
-    idx = o2session_import_bios(self->session, path, msg, sizeof msg);
-    if (idx < 0 || !o2session_have_bios(self->session)) {
-        show_message(GTK_WIDGET(self), idx < 0 ? "Cannot Import BIOS" : "BIOS Imported",
-                     msg[0] ? msg : o2session_last_error(self->session));
-        return;
+    for (i = 0; i < n; i++) {
+        char msg[2048];
+        int rc = o2session_rom_import(self->session, paths[i], msg, sizeof msg);
+        if (rc > 0)
+            total += rc;
+        else if (rc < 0)
+            failed = TRUE;
+        if (msg[0])
+            g_string_append_printf(log, "%s%s", log->len ? "\n" : "", msg);
+        else if (rc < 0)
+            g_string_append_printf(log, "%s%s", log->len ? "\n" : "",
+                                   o2session_last_error(self->session));
     }
-    if (retry && *retry) {
-        open_cart_path(self, retry);
-        return;
+    if (total > 0 && apply && import_fixed_something(self, missing)) {
+        if (retry && *retry) {
+            open_cart_path(self, retry);
+            g_string_append(log, "\n\nThe cartridge was opened again with it.");
+        } else if (o2session_restart(self->session) == 0) {
+            g_string_append(log, "\n\nThe console was power-cycled so it takes effect now.");
+        }
     }
-    o2session_reset_to_config(self->session);
-    o2_window_toast(self, "BIOS imported \xe2\x80\x94 back to CONFIG on the real BIOS");
+    show_message(over ? over : GTK_WIDGET(self),
+                 total > 0 ? "BIOS Imported" : failed ? "Cannot Import BIOS" : "Nothing Imported",
+                 log->len ? log->str : "Nothing was recognised.");
+    g_string_free(log, TRUE);
+    return total;
 }
 
+typedef struct {
+    O2Window *self;
+    GtkWidget *over;            /* weak: the dialog may be gone by now */
+    gboolean folder, apply;
+    char *retry;
+    void (*done)(int, gpointer);
+    gpointer user_data;
+} ImportCtx;
+
+static void import_ctx_free(ImportCtx *c)
+{
+    if (c->over)
+        g_object_remove_weak_pointer(G_OBJECT(c->over), (gpointer *)&c->over);
+    g_free(c->retry);
+    g_free(c);
+}
+
+static void on_bios_chosen(GObject *src, GAsyncResult *res, gpointer user_data)
+{
+    ImportCtx *c = user_data;
+    GPtrArray *paths = g_ptr_array_new_with_free_func(g_free);
+    int imported = -1;
+
+    if (c->folder) {
+        g_autoptr(GFile) dir = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(src), res, NULL);
+        char *path = dir ? g_file_get_path(dir) : NULL;
+        if (path)
+            g_ptr_array_add(paths, path);
+    } else {
+        g_autoptr(GListModel) files = gtk_file_dialog_open_multiple_finish(GTK_FILE_DIALOG(src), res, NULL);
+        guint i;
+        for (i = 0; files && i < g_list_model_get_n_items(files); i++) {
+            g_autoptr(GFile) f = g_list_model_get_item(files, i);
+            char *path = g_file_get_path(f);
+            if (path)
+                g_ptr_array_add(paths, path);
+        }
+    }
+    if (paths->len > 0)
+        imported = import_paths(c->self, c->over, (char *const *)paths->pdata,
+                                (int)paths->len, c->apply, c->retry);
+    if (c->done)
+        c->done(imported, c->user_data);
+    g_ptr_array_free(paths, TRUE);
+    import_ctx_free(c);
+}
+
+void o2_window_import_bios(O2Window *self, GtkWidget *over, gboolean folder,
+                           gboolean apply, const char *retry,
+                           void (*done)(int imported, gpointer user_data),
+                           gpointer user_data)
+{
+    ImportCtx *c = g_new0(ImportCtx, 1);
+    GtkFileDialog *dlg = file_dialog(folder ? "Import BIOS from a Folder" : "Import BIOS",
+        "BIOS, character-set and speech ROMs, or zips of them (*.bin, *.rom, *.zip)",
+        k_bios_exts, NULL);
+
+    c->self = self;
+    c->over = over;
+    if (over)
+        g_object_add_weak_pointer(G_OBJECT(over), (gpointer *)&c->over);
+    c->folder = folder;
+    c->apply = apply;
+    c->retry = g_strdup(retry);
+    c->done = done;
+    c->user_data = user_data;
+    if (folder)
+        gtk_file_dialog_select_folder(dlg, GTK_WINDOW(self), NULL, on_bios_chosen, c);
+    else
+        gtk_file_dialog_open_multiple(dlg, GTK_WINDOW(self), NULL, on_bios_chosen, c);
+    g_object_unref(dlg);
+}
+
+static void action_import_bios(GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+    (void)a; (void)p;
+    o2_window_import_bios(user_data, GTK_WIDGET(user_data), FALSE, TRUE, NULL, NULL, NULL);
+}
+
+static void action_import_bios_folder(GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+    (void)a; (void)p;
+    o2_window_import_bios(user_data, GTK_WIDGET(user_data), TRUE, TRUE, NULL, NULL, NULL);
+}
+
+/* ---- what the running configuration is missing ------------------------------------- */
+
+/* Import BIOS out of the "needs the BIOS" alert: once the console's BIOS is
+ * there, carry straight on -- open the refused cartridge again, or (a game
+ * CONFIG booted from the network) power-cycle back to CONFIG on the real
+ * BIOS, so booting the game again just works. Anything short of that (a
+ * folder without it, a bad file) is said in a dialog instead. */
 static void on_bios_needed_response(AdwAlertDialog *dlg, const char *response,
                                     gpointer user_data)
 {
     O2Window *self = user_data;
-    GtkFileDialog *fd;
     if (strcmp(response, "import") != 0)
         return;
-    fd = bios_dialog();
-    g_object_set_data_full(G_OBJECT(fd), "retry",
-                           g_strdup(g_object_get_data(G_OBJECT(dlg), "retry")), g_free);
-    gtk_file_dialog_open(fd, GTK_WINDOW(self), NULL, on_needed_bios_chosen, self);
-    g_object_unref(fd);
+    o2_window_import_bios(self, GTK_WIDGET(self), FALSE, TRUE,
+                          g_object_get_data(G_OBJECT(dlg), "retry"), NULL, NULL);
 }
 
-/* "This cartridge needs the Magnavox Odyssey 2 BIOS": commercial games are
- * written in the BIOS's own byte-code, and only the real BIOS runs them --
- * the app's stand-in runs CONFIG and FujiNet apps only. `retry` is a
- * cartridge Open refused (opened again after the import), or NULL for a
- * game CONFIG booted from the network. */
+/* "This cartridge needs the Odyssey 2 BIOS": commercial games call the
+ * BIOS's routines, and only the real BIOS runs them -- the app's stand-in
+ * runs CONFIG and FujiNet apps only. `retry` is a cartridge Open refused
+ * (opened again after the import), or NULL for a game CONFIG booted from the
+ * network. */
 static void show_bios_needed(O2Window *self, const char *retry)
 {
     AdwDialog *dlg;
 
-    if (o2session_have_bios(self->session)) {
+    if (o2session_have_bios(self->session, machine_now(self))) {
         /* imported, but switched off: importing again would not help */
-        show_message(GTK_WIDGET(self), "This cartridge needs the Magnavox Odyssey 2 BIOS",
+        show_message(GTK_WIDGET(self), "This cartridge needs the Odyssey 2 BIOS",
             "A BIOS is imported, but Preferences has \xe2\x80\x9cUse the imported "
             "BIOS\xe2\x80\x9d switched off, so the app's stand-in is running. It runs "
             "CONFIG and FujiNet apps, not games.");
         return;
     }
-    dlg = adw_alert_dialog_new("This cartridge needs the Magnavox Odyssey 2 BIOS",
-        "Odyssey 2 games are written in the BIOS's own byte-code, so only the real "
-        "BIOS runs them; CONFIG and FujiNet apps run without it. Import your own "
-        "copy: the 2K set, the 1K system ROM, or MAME's 84932.ic11 and 84933.ic12.");
+    dlg = adw_alert_dialog_new("This cartridge needs the Odyssey 2 BIOS",
+        "Odyssey 2 games call the console's BIOS, so only the real one runs them; "
+        "CONFIG and FujiNet apps run without it. Machine \xe2\x96\xb8 Import BIOS\xe2\x80\xa6 "
+        "adds your own copy: the o2bios.rom dump, or MAME's videopac.zip and "
+        "i8244.zip (the Videopac+ G7400 needs its own, g7400.bin).");
     adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dlg),
                                    "later", "_Not Now",
                                    "import", "_Import BIOS\xe2\x80\xa6", NULL);
@@ -388,6 +515,16 @@ static void show_bios_needed(O2Window *self, const char *retry)
     adw_dialog_present(dlg, GTK_WIDGET(self));
 }
 
+/* The banners under the header bar for what is missing but does not stop the
+ * machine: the 8244's character set (text shows blank) and The Voice's
+ * speech ROMs. Both clear at the power cycle the import brings. */
+static void sync_banners(O2Window *self)
+{
+    const unsigned missing = o2session_missing(self->session);
+    adw_banner_set_revealed(self->banner_font, (missing & O2_MISSING_FONT) != 0);
+    adw_banner_set_revealed(self->banner_voice, (missing & O2_MISSING_VOICE) != 0);
+}
+
 /* The gamepad thread cannot call into GTK; it posts system actions and this
  * timer takes them. It also watches for gamepads coming and going, and says
  * so: a pad that drops off Bluetooth mid-game should not be a mystery. And
@@ -397,6 +534,8 @@ static void show_bios_needed(O2Window *self, const char *retry)
 static gboolean sysact_drain_tick(gpointer user_data)
 {
     O2Window *self = user_data;
+    GAction *pause = g_action_map_lookup_action(G_ACTION_MAP(self), "pause");
+    const gboolean paused = o2session_is_paused(self->session) != 0;
     unsigned gen;
     int sa;
     while (o2session_sysaction_take(self->session, &sa))
@@ -418,7 +557,15 @@ static gboolean sysact_drain_tick(gpointer user_data)
     } else {
         self->needs_bios_shown = FALSE;
     }
+    sync_banners(self);
     sync_console_menu(self);
+    /* the session pauses too (the debugger's Run/Stop is separate): the menu's
+     * check follows it */
+    if (pause) {
+        g_autoptr(GVariant) state = g_action_get_state(pause);
+        if (g_variant_get_boolean(state) != paused)
+            g_simple_action_set_state(G_SIMPLE_ACTION(pause), g_variant_new_boolean(paused));
+    }
     return G_SOURCE_CONTINUE;
 }
 
@@ -443,6 +590,11 @@ static gboolean update_status(gpointer user_data)
                        slash ? slash + 1 : cart, st);
         else
             g_snprintf(text, sizeof text, "FujiNet %s", st);
+        if (o2session_is_paused(self->session)) {
+            char paused[1200];
+            g_snprintf(paused, sizeof paused, "Paused \xe2\x80\x94 %s", text);
+            g_strlcpy(text, paused, sizeof text);
+        }
     }
     gtk_label_set_text(GTK_LABEL(self->status), text);
     if (on) {
@@ -455,7 +607,7 @@ static gboolean update_status(gpointer user_data)
     return G_SOURCE_CONTINUE;
 }
 
-/* ---- cartridges and BIOSes ------------------------------------------------- */
+/* ---- cartridges --------------------------------------------------------------- */
 
 static const char *base_name(const char *p)
 {
@@ -475,7 +627,7 @@ static void open_cart_path(O2Window *self, const char *path)
             o2session_check_cart(path, why, sizeof why) &&
             !o2session_cart_is_app(path) &&
             !(o2session_get_int(self->session, "use_bios", 1) &&
-              o2session_have_bios(self->session))) {
+              o2session_have_bios(self->session, machine_now(self)))) {
             show_bios_needed(self, path);
             return;
         }
@@ -487,15 +639,16 @@ static void open_cart_path(O2Window *self, const char *path)
     o2_window_toast(self, msg);
 }
 
-/* A dropped file: a BIOS is imported, a cartridge runs, anything else goes
- * where it belongs. The BIOS test comes first: BIOS dumps are .bin and .rom
- * too, and they are recognised by size and CRC, not by name. */
+/* A dropped file: a BIOS or ROM set is imported, a cartridge runs, anything
+ * else goes where it belongs. The ROM test comes first: ROM dumps are .bin
+ * and .rom too, and they are recognised by size and CRC, not by name. */
 void o2_window_load_media(O2Window *self, const char *path)
 {
     char dest[1024];
 
-    if (o2session_media_is_bios(path)) {
-        o2_show_bios_import(GTK_WIDGET(self), self->session, path);
+    if (o2session_media_is_rom(path)) {
+        char *paths[1] = { (char *)path };
+        import_paths(self, GTK_WIDGET(self), paths, 1, TRUE, NULL);
         return;
     }
     if (o2session_media_is_cartridge(path)) {
@@ -512,12 +665,10 @@ void o2_window_load_media(O2Window *self, const char *path)
 
 static GtkFileDialog *cart_dialog(O2Window *self, const char *title)
 {
-    static const char *const exts[] = { "st2", "bin", "rom", NULL };
     const char *cart = o2session_cart_path(self->session);
     g_autofree char *dir = cart && *cart ? g_path_get_dirname(cart) : NULL;
     /* where the last cartridge came from: the next one is usually beside it */
-    return file_dialog(title, "Magnavox Odyssey 2 cartridges (*.st2, *.bin, *.rom)",
-                       exts, dir);
+    return file_dialog(title, "Odyssey 2 cartridges (*.bin, *.rom, *.o2)", k_cart_exts, dir);
 }
 
 static void on_cart_chosen(GObject *src, GAsyncResult *res, gpointer user_data)
@@ -566,25 +717,6 @@ static void action_import_sd(GSimpleAction *a, GVariant *p, gpointer user_data)
     g_object_unref(dlg);
 }
 
-static void on_bios_chosen(GObject *src, GAsyncResult *res, gpointer user_data)
-{
-    O2Window *self = user_data;
-    g_autoptr(GFile) file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, NULL);
-    g_autofree char *path = NULL;
-    if (!file) return;
-    path = g_file_get_path(file);
-    if (path) o2_show_bios_import(GTK_WIDGET(self), self->session, path);
-}
-
-static void action_import_bios(GSimpleAction *a, GVariant *p, gpointer user_data)
-{
-    O2Window *self = user_data;
-    GtkFileDialog *dlg = bios_dialog();
-    (void)a; (void)p;
-    gtk_file_dialog_open(dlg, GTK_WINDOW(self), NULL, on_bios_chosen, self);
-    g_object_unref(dlg);
-}
-
 static void action_eject(GSimpleAction *a, GVariant *p, gpointer user_data)
 {
     O2Window *self = user_data;
@@ -608,13 +740,26 @@ static gboolean on_drop(GtkDropTarget *t, const GValue *value, double x,
 
 /* ---- the console and actions ---------------------------------------------- */
 
-/* CLEAR from the menu: the session holds it for a few frames, long enough
- * for the console to see it (it samples the button once a frame). */
-static void action_clear(GSimpleAction *a, GVariant *p, gpointer user_data)
+static void action_pause(GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+    O2Window *self = user_data;
+    g_autoptr(GVariant) state = g_action_get_state(G_ACTION(a));
+    gboolean on = !g_variant_get_boolean(state);
+    (void)p;
+    g_simple_action_set_state(a, g_variant_new_boolean(on));
+    o2session_set_paused(self->session, on);
+    update_status(self);
+}
+
+/* The console's RESET key from the menu: the session holds it for a few
+ * frames, long enough for the console to see it (it samples the keys once a
+ * frame). It resets the 8048 only: a FujiNet app restarts from the
+ * cartridge's current image. */
+static void action_reset(GSimpleAction *a, GVariant *p, gpointer user_data)
 {
     O2Window *self = user_data;
     (void)a; (void)p;
-    o2session_clear(self->session);
+    o2session_reset(self->session);
 }
 
 static void action_reset_config(GSimpleAction *a, GVariant *p, gpointer user_data)
@@ -623,11 +768,11 @@ static void action_reset_config(GSimpleAction *a, GVariant *p, gpointer user_dat
     o2_window_run_sysaction(user_data, O2_SYSACT_RESET_CONFIG);
 }
 
-static void action_keypad(GSimpleAction *a, GVariant *p, gpointer user_data)
+static void action_controllers(GSimpleAction *a, GVariant *p, gpointer user_data)
 {
     O2Window *self = user_data;
     (void)a; (void)p;
-    o2_keypad_window_toggle(GTK_WINDOW(self), self->session);
+    o2_controllers_toggle(GTK_WINDOW(self), self->session);
 }
 
 static void action_debugger(GSimpleAction *a, GVariant *p, gpointer user_data)
@@ -712,17 +857,19 @@ static void action_about(GSimpleAction *a, GVariant *p, gpointer user_data)
         "https://github.com/FujiNetWIFI/fujinet-go-o2-desktop/issues");
     adw_about_dialog_set_license_type(ADW_ABOUT_DIALOG(about), GTK_LICENSE_GPL_3_0);
     adw_about_dialog_set_comments(ADW_ABOUT_DIALOG(about),
-        "Magnavox Odyssey 2 with built-in FujiNet. The emulator is MAME's RCA Studio "
-        "II, CDP1802 and CDP1861 (Curt Coder, BSD-3-Clause) transposed to C; the "
-        "FujiNet firmware and the cartridge are by Thomas Cherryhomes and the "
-        "FujiNet contributors (GPL-3.0-or-later).");
+        "Magnavox Odyssey 2 and Philips Videopac with built-in FujiNet. The emulator is "
+        "MAME's Odyssey 2 / Videopac (Intel 8048, the 8244/8245 video chip, the "
+        "EF9340/41 and The Voice's SP0256; BSD-3-Clause) transposed to C; the FujiNet "
+        "firmware and the cartridge are by Thomas Cherryhomes and the FujiNet "
+        "contributors (GPL-3.0-or-later).");
     adw_dialog_present(about, GTK_WIDGET(self));
 }
 
 static void action_aspect(GSimpleAction *a, GVariant *p, gpointer user_data)
 {
     O2Window *self = user_data;
-    gboolean tv = !g_variant_get_boolean(g_action_get_state(G_ACTION(a)));
+    g_autoptr(GVariant) state = g_action_get_state(G_ACTION(a));
+    gboolean tv = !g_variant_get_boolean(state);
     (void)p;
     g_simple_action_set_state(a, g_variant_new_boolean(tv));
     o2_display_set_tv_aspect(O2_DISPLAY(self->display), tv);
@@ -733,7 +880,8 @@ static void action_aspect(GSimpleAction *a, GVariant *p, gpointer user_data)
 static void action_smooth(GSimpleAction *a, GVariant *p, gpointer user_data)
 {
     O2Window *self = user_data;
-    gboolean sm = !g_variant_get_boolean(g_action_get_state(G_ACTION(a)));
+    g_autoptr(GVariant) state = g_action_get_state(G_ACTION(a));
+    gboolean sm = !g_variant_get_boolean(state);
     (void)p;
     g_simple_action_set_state(a, g_variant_new_boolean(sm));
     o2_display_set_smooth(O2_DISPLAY(self->display), sm);
@@ -748,14 +896,24 @@ void o2_window_apply_aspect(O2Window *self, int aspect)
         g_simple_action_set_state(G_SIMPLE_ACTION(a), g_variant_new_boolean(aspect == 0));
 }
 
+void o2_window_apply_smooth(O2Window *self, gboolean smooth)
+{
+    GAction *a = g_action_map_lookup_action(G_ACTION_MAP(self), "smooth");
+    o2_display_set_smooth(O2_DISPLAY(self->display), smooth);
+    if (a)
+        g_simple_action_set_state(G_SIMPLE_ACTION(a), g_variant_new_boolean(smooth));
+}
+
 static const GActionEntry win_actions[] = {
     { "open", action_open, NULL, NULL, NULL, { 0 } },
     { "eject", action_eject, NULL, NULL, NULL, { 0 } },
     { "import-sd", action_import_sd, NULL, NULL, NULL, { 0 } },
     { "import-bios", action_import_bios, NULL, NULL, NULL, { 0 } },
-    { "clear", action_clear, NULL, NULL, NULL, { 0 } },
+    { "import-bios-folder", action_import_bios_folder, NULL, NULL, NULL, { 0 } },
+    { "pause", action_pause, NULL, "false", NULL, { 0 } },
+    { "reset", action_reset, NULL, NULL, NULL, { 0 } },
     { "reset-config", action_reset_config, NULL, NULL, NULL, { 0 } },
-    { "keypad", action_keypad, NULL, NULL, NULL, { 0 } },
+    { "controllers", action_controllers, NULL, NULL, NULL, { 0 } },
     { "debugger", action_debugger, NULL, NULL, NULL, { 0 } },
     { "fullscreen", action_fullscreen, NULL, NULL, NULL, { 0 } },
     { "tv-aspect", action_aspect, NULL, "true", NULL, { 0 } },
@@ -777,28 +935,29 @@ static GMenu *build_menu(O2Window *self)
     GMenu *fuji = g_menu_new();
     GMenu *app = g_menu_new();
 
-    g_menu_append(cart, "_Open Cartridge...", "win.open");
-    g_menu_append(cart, "_Eject Cartridge", "win.eject");
-    g_menu_append(cart, "_Import Cartridge to SD...", "win.import-sd");
-    g_menu_append(cart, "Import _BIOS...", "win.import-bios");
+    g_menu_append(cart, "_Open Cartridge\xe2\x80\xa6", "win.open");
+    g_menu_append(cart, "E_ject Cartridge", "win.eject");
+    g_menu_append(cart, "Import Cartridge to _SD\xe2\x80\xa6", "win.import-sd");
+    g_menu_append(cart, "Import _BIOS\xe2\x80\xa6", "win.import-bios");
+    g_menu_append(cart, "Import BIOS from a _Folder\xe2\x80\xa6", "win.import-bios-folder");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(cart));
 
     /* filled (and kept current) by sync_console_menu */
     self->console_menu = g_menu_new();
     g_menu_append_section(menu, "Console", G_MENU_MODEL(self->console_menu));
 
-    g_menu_append(view, "_Keypad (F9)", "win.keypad");
+    g_menu_append(view, "Con_trollers (F9)", "win.controllers");
     g_menu_append(view, "_Debugger (F12)", "win.debugger");
-    g_menu_append(view, "_TV Aspect", "win.tv-aspect");
+    g_menu_append(view, "T_V Aspect", "win.tv-aspect");
     g_menu_append(view, "S_mooth Scaling", "win.smooth");
-    g_menu_append(view, "_Fullscreen (F11)", "win.fullscreen");
+    g_menu_append(view, "F_ullscreen (F11)", "win.fullscreen");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(view));
 
     g_menu_append(fuji, "FujiNet _Web UI", "win.fujinet-config");
     g_menu_append(fuji, "Console _Log", "win.fujinet-log");
     g_menu_append_section(menu, "FujiNet", G_MENU_MODEL(fuji));
 
-    g_menu_append(app, "_Preferences", "win.prefs");
+    g_menu_append(app, "Pr_eferences", "win.prefs");
     g_menu_append(app, "_About FujiNet Go Odyssey 2", "win.about");
     g_menu_append(app, "_Quit", "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app));
@@ -835,10 +994,18 @@ static void o2_window_init(O2Window *self)
     (void)self;
 }
 
+static AdwBanner *banner_new(const char *title)
+{
+    AdwBanner *b = ADW_BANNER(adw_banner_new(title));
+    adw_banner_set_button_label(b, "Import BIOS\xe2\x80\xa6");
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(b), "win.import-bios");
+    return b;
+}
+
 GtkWidget *o2_window_new(AdwApplication *app, o2session *session)
 {
     O2Window *self = g_object_new(O2_TYPE_WINDOW, "application", app, NULL);
-    GtkWidget *box, *header, *menu_button, *toolbar, *status_box;
+    GtkWidget *header, *menu_button, *toolbar, *status_box;
     GtkEventController *keys, *focus;
     g_autoptr(GMenu) menu = NULL;
 
@@ -847,9 +1014,9 @@ GtkWidget *o2_window_new(AdwApplication *app, o2session *session)
 
     gtk_window_set_title(GTK_WINDOW(self), "FujiNet Go Odyssey 2");
     gtk_window_set_icon_name(GTK_WINDOW(self), o2_icon_name());
-    /* The picture at the television's 4:3, 246 lines three times over:
-     * 984 x 738 under the header bar. */
-    gtk_window_set_default_size(GTK_WINDOW(self), 984, 738 + 46);
+    /* The picture at the television's 4:3, 243 lines three times over:
+     * 972 x 729 under the header bar. */
+    gtk_window_set_default_size(GTK_WINDOW(self), 972, 729 + 46);
 
     g_action_map_add_action_entries(G_ACTION_MAP(self), win_actions,
                                     G_N_ELEMENTS(win_actions), self);
@@ -908,13 +1075,16 @@ GtkWidget *o2_window_new(AdwApplication *app, o2session *session)
     self->toast_overlay = adw_toast_overlay_new();
     adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(self->toast_overlay), self->display);
 
-    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    self->banner_font = banner_new("Character set not imported \xe2\x80\x94 text will be "
+                                   "blank. Import BIOS\xe2\x80\xa6 to add it.");
+    self->banner_voice = banner_new("The Voice's speech ROMs are not imported \xe2\x80\x94 "
+                                    "it will be silent. Import BIOS\xe2\x80\xa6 to add them.");
     toolbar = adw_toolbar_view_new();
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->banner_font));
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->banner_voice));
     adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), self->toast_overlay);
-    gtk_box_append(GTK_BOX(box), toolbar);
-    gtk_widget_set_vexpand(toolbar, TRUE);
-    adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), box);
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(self), toolbar);
 
     /* Capture on the WINDOW so input works no matter what has focus. */
     keys = gtk_event_controller_key_new();
@@ -935,13 +1105,13 @@ GtkWidget *o2_window_new(AdwApplication *app, o2session *session)
     sync_console_menu(self);
     update_status(self);
 
-    /* O2_OPEN_KEYPAD=1 / O2_OPEN_DEBUGGER=1 / O2_OPEN_SETTINGS=1
+    /* O2_OPEN_CONTROLLERS=1 / O2_OPEN_DEBUGGER=1 / O2_OPEN_SETTINGS=1
      * open those windows at launch, following the family's convention: the
      * way in when the app misbehaves before the menu is reachable. */
     {
-        const char *env = g_getenv("O2_OPEN_KEYPAD");
+        const char *env = g_getenv("O2_OPEN_CONTROLLERS");
         if (env && *env && *env != '0')
-            o2_keypad_window_toggle(GTK_WINDOW(self), session);
+            o2_controllers_toggle(GTK_WINDOW(self), session);
         env = g_getenv("O2_OPEN_DEBUGGER");
         if (env && *env && *env != '0')
             o2_debugger_show(GTK_WINDOW(self), session);

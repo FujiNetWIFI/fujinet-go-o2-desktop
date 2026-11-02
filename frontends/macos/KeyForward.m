@@ -56,8 +56,8 @@ uint32_t O2KeysymFromFlagsChange(NSEvent *event, int *down)
     case kVK_RightShift:   *down = (f & NSEventModifierFlagShift) != 0;   return O2_KEYSYM_RSHIFT;
     case kVK_Control:      *down = (f & NSEventModifierFlagControl) != 0; return O2_KEYSYM_LCTRL;
     case kVK_RightControl: *down = (f & NSEventModifierFlagControl) != 0; return O2_KEYSYM_RCTRL;
-    /* Option is where a Mac keyboard puts the key a PC calls Alt -- Left Alt
-     * is keypad A's 0 by default (MAME's), so this one matters here. */
+    /* Option is where a Mac keyboard puts the key a PC calls Alt; a binding
+     * can sit on it like on Shift and Control. */
     case kVK_Option:       *down = (f & NSEventModifierFlagOption) != 0;  return O2_KEYSYM_LALT;
     case kVK_RightOption:  *down = (f & NSEventModifierFlagOption) != 0;  return O2_KEYSYM_RALT;
     default: *down = 0; return 0;

@@ -1,5 +1,5 @@
 /*
- * The AppKit debugger window over the CDP1802 / CDP1861 debugger engine
+ * The AppKit debugger window over the Intel 8048 / 8244 debugger engine
  * (o2debug.h).
  * SPDX-License-Identifier: GPL-3.0-or-later
  */

@@ -23,8 +23,11 @@ add_executable(fujinet-go-o2-macos MACOSX_BUNDLE
   AppDelegate.m
   DisplayView.m
   KeyForward.m
-  keypad/KeypadWindow.m
+  SettingsWindow.m
+  controllers/ControllersWindow.m
   debugger/DebuggerWindow.m
+  debugger/DebugViews.m
+  debugger/VideoTab.m
   "${O2_ICNS}"
 )
 set_source_files_properties("${O2_ICNS}" PROPERTIES

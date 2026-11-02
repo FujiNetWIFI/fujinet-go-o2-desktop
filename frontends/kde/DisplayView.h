@@ -14,7 +14,7 @@ public:
     virtual ~DisplayView() = default;
     virtual QWidget *widget() = 0;
     /* "aspect" setting: the picture at the TV's 4:3 when true, square pixels
-     * (a very tall 100:246 picture) when false. */
+     * (the raw 360:243 buffer) when false. */
     virtual void setTvAspect(bool tv) = 0;
     virtual void setSmooth(bool smooth) = 0;
 };

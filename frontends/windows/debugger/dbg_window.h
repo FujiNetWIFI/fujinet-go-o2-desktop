@@ -1,6 +1,7 @@
 /*
- * The Win32 debugger window over the CDP1802 / CDP1861 debugger engine
- * (o2debug.h).
+ * The Win32 debugger window over the MCS-48 / 8244 debugger engine
+ * (o2debug.h): nine tabs -- Prompt, CPU & RAM, Disassembly, Video, EF9340,
+ * Sound & I/O, Breakpoints, Cart, FujiNet.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later

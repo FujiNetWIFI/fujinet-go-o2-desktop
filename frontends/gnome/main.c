@@ -19,7 +19,7 @@
 static o2session *g_session;
 static char *g_media_arg;
 /* The main window. Not gtk_application_get_active_window(): that is the
- * window focused last, which can be the (hidden) keypad or debugger
+ * window focused last, which can be the (hidden) controllers or debugger
  * window, and a file opened then must still reach the machine's window. */
 static GtkWidget *g_main_window;
 
@@ -46,7 +46,7 @@ const char *o2_icon_name(void)
     return name;
 }
 
-/* The keypad, debugger and log windows are hidden rather than destroyed
+/* The controllers, debugger and log windows are hidden rather than destroyed
  * and belong to the application (so the shell groups them with it), which
  * means the application would outlive its main window. Closing the main
  * window is quitting. */

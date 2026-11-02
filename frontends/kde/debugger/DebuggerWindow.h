@@ -1,10 +1,13 @@
 /*
- * Debugger window (Qt6 Widgets) over the CDP1802 / CDP1861 debugger engine,
- * via core/include/o2debug.h. Mirrors the GNOME one tab for tab.
+ * Debugger window (Qt6 Widgets) over the MCS-48 / 8244 debugger engine, via
+ * core/include/o2debug.h. Mirrors the GNOME one tab for tab: Prompt, CPU &
+ * RAM, Disassembly, Video (the 8244), EF9340, Sound & I/O, Breakpoints, Cart,
+ * FujiNet.
  *
- * The engine is attached while the window is shown (which stops the
- * machine, as on every sibling) and detached when it is hidden, which lets
- * the machine run on.
+ * The engine is attached while the window is shown (which stops the machine,
+ * as on every sibling) and detached when it is hidden, which lets the
+ * machine run on. A timer runs only while it is shown, and refreshes only the
+ * tab that shows.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -30,12 +33,10 @@ extern "C" {
 #include "o2session.h"
 }
 
-/* The painted panels, defined in DebuggerWindow.cpp: a keypad as the
- * console sees it (Sound & I/O), the cartridge's page map and its text
- * engine's character grid (Cart). */
-class KeypadDiagram;
-class PageMapWidget;
-class TextGridWidget;
+class CartTab;
+class EfTab;
+class IoTab;
+class VideoTab;
 
 class DebuggerWindow : public QMainWindow {
     Q_OBJECT
@@ -57,21 +58,18 @@ private:
     QWidget *buildPrompt();
     QWidget *buildCpu();
     QWidget *buildDisasm();
-    QWidget *buildVideo();
-    QWidget *buildIo();
     QWidget *buildBreaks();
-    QWidget *buildCart();
     QWidget *buildFujinet();
+    QTableWidget *hexTable(int space, int size);
+    QLineEdit *regEdit(int reg, int digits, const QString &tip);
 
     void refreshAll();
+    void refreshTab(int index);
     void refreshStatus();
     void refreshCpu();
     void refreshRam();
     void refreshDisasm();
-    void refreshVideo();
-    void refreshIo();
     void refreshBps();
-    void refreshCart();
     void refreshFujinet(bool force);
     void tick();
     void toggleRun();
@@ -81,6 +79,8 @@ private:
     void stepAnd(void (*fn)(o2debug *));
     void loadSymbols(bool fromFile);
     void setRegister(int reg, QLineEdit *edit);
+    void setBankRegister(int bank, int n, QLineEdit *edit);
+    void syncBpForm();
     bool addressOf(const QString &text, long *out);
 
     o2session *m_session;
@@ -100,12 +100,13 @@ private:
     int m_historyPos = 0;
 
     QLineEdit *m_reg[O2_REG_COUNT] = {};
-    QLabel *m_regLabel[16] = {};
-    QCheckBox *m_ef[4] = {};
+    QLineEdit *m_bankReg[2][8] = {};
+    QLabel *m_bankHead[2] = {};
+    QCheckBox *m_state[9] = {};
     QLabel *m_cpuInfo = nullptr;
-    QPlainTextEdit *m_ram = nullptr;
-    QLineEdit *m_ramGoto = nullptr;
-    QLineEdit *m_ramAddr = nullptr, *m_ramVal = nullptr;
+    QTableWidget *m_hex[2] = {};            /* the internal and the external RAM */
+    std::vector<uint8_t> m_hexPrev[2];
+    bool m_hexFilling = false;
 
     QPlainTextEdit *m_disasm = nullptr;
     QCheckBox *m_followPc = nullptr;
@@ -113,24 +114,15 @@ private:
     uint16_t m_disasmTop = 0;
     std::vector<uint16_t> m_lineAddr;
 
-    QPlainTextEdit *m_videoText = nullptr;
-    QComboBox *m_videoView = nullptr;
-    QLabel *m_videoPic = nullptr;
-    QLabel *m_videoNote = nullptr;
-    std::vector<uint32_t> m_videoPx;
-
-    QPlainTextEdit *m_io = nullptr;
-    KeypadDiagram *m_keypad[2] = {};
+    VideoTab *m_video = nullptr;
+    EfTab *m_ef = nullptr;
+    IoTab *m_io = nullptr;
+    CartTab *m_cart = nullptr;
 
     QTableWidget *m_bpTable = nullptr;
-    QComboBox *m_bpType = nullptr;
+    QComboBox *m_bpType = nullptr, *m_bpSpace = nullptr;
     QLineEdit *m_bpStart = nullptr, *m_bpEnd = nullptr, *m_bpCond = nullptr;
     bool m_bpFilling = false;
-
-    QPlainTextEdit *m_cart = nullptr;
-    PageMapWidget *m_pageMap = nullptr;
-    TextGridWidget *m_textGrid = nullptr;
-    QLabel *m_textNote = nullptr;
 
     QLabel *m_fujiNote = nullptr;
     QPlainTextEdit *m_fujiText = nullptr, *m_fujiState = nullptr;

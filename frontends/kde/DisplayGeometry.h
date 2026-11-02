@@ -2,10 +2,9 @@
  * Where the picture goes inside the display, shared by the GPU and the
  * software display.
  *
- * The 1861 paints 100 x 246 (its 64 x 128 picture inside the blanking MAME
- * keeps) across the whole of a 4:3 television, so on the TV a Odyssey 2
- * pixel is more than three times as wide as it is tall. Square pixels show
- * the raw buffer: a very tall, narrow picture.
+ * The 8244/8245 paints 360 x 243 across a 4:3 television, so on the TV a
+ * pixel is a little narrower than it is tall (0.9 : 1). Square pixels show
+ * the raw buffer at 360 : 243.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later

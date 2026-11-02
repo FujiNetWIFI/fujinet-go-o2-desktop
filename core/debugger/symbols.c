@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "symbols.h"
+#include "fuji_mailbox.h"
 
 void symtab_init(symtab *t)
 {
@@ -381,13 +382,16 @@ int symtab_load(symtab *t, const char *path, char *msg, int msgsz)
     return count;
 }
 
-/* ---- ports ---- */
+/* ---- external data ---- */
 
-const char *o2_port_name(uint8_t port, int is_out)
+const char *o2_xdata_name(uint8_t addr)
 {
-    if (!is_out && port == 1)
-        return "DISPLAY_ON";
-    if (is_out && port == 2)
-        return "KEYLATCH";
-    return NULL;
+    switch (addr)
+    {
+    case FN_W_REGSEL:  return "FN_W_REGSEL";
+    case FN_W_REGDATA: return "FN_W_REGDATA";
+    case FN_W_DATA:    return "FN_W_DATA";
+    case FN_W_SEQ:     return "FN_W_SEQ";
+    default:           return NULL;
+    }
 }

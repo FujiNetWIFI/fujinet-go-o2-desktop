@@ -105,6 +105,16 @@ static long number(parser *ps)
     return v;
 }
 
+/* After the opening bracket: expr ] and the read. */
+static long mem_read(parser *ps, int space)
+{
+    long a = expr_or(ps);
+
+    if (!accept(ps, "]"))
+        fail(ps, "missing ]");
+    return ps->ctx && ps->ctx->read8 ? ps->ctx->read8(ps->ctx->user, space, (uint16_t)a) : 0;
+}
+
 static long primary(parser *ps)
 {
     long v;
@@ -118,24 +128,7 @@ static long primary(parser *ps)
         return v;
     }
     if (accept(ps, "["))
-    {
-        long a = expr_or(ps);
-        if (!accept(ps, "]"))
-            fail(ps, "missing ]");
-        return ps->ctx && ps->ctx->read8 ? ps->ctx->read8(ps->ctx->user, (uint16_t)a) : 0;
-    }
-    if (accept(ps, "{"))
-    {
-        long a = expr_or(ps);
-        if (!accept(ps, "}"))
-            fail(ps, "missing }");
-        if (!ps->ctx || !ps->ctx->read8)
-            return 0;
-        /* big-endian: the 1802 keeps an address high byte first (LDA,
-         * PHI; LDA, PLO -- the SCRT link and every DW) */
-        return (ps->ctx->read8(ps->ctx->user, (uint16_t)a) << 8)
-             | ps->ctx->read8(ps->ctx->user, (uint16_t)(a + 1));
-    }
+        return mem_read(ps, 0);
     if (isdigit((unsigned char)*ps->p) || *ps->p == '$' || *ps->p == '%')
         return number(ps);
     if (is_name_start(*ps->p))
@@ -145,6 +138,20 @@ static long primary(parser *ps)
         while (is_name_char(*ps->p) && n + 1 < (int)sizeof name)
             name[n++] = *ps->p++;
         name[n] = '\0';
+        /* x[..], i[..], v[..], p[..]: a byte of that address space */
+        if (*ps->p == '[' && n == 1 && strchr("xivpXIVP", name[0]))
+        {
+            int space = 0;
+            switch (name[0] | 0x20)
+            {
+            case 'x': space = 1; break;
+            case 'i': space = 2; break;
+            case 'v': space = 3; break;
+            default:  break;
+            }
+            ps->p++;
+            return mem_read(ps, space);
+        }
         if (!ps->ctx)
             return 0;
         if (ps->ctx->name && ps->ctx->name(ps->ctx->user, name, &v))

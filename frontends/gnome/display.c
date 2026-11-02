@@ -7,16 +7,16 @@
  *    compositor's vsync, so its tick callback is the most accurate ~60 Hz
  *    signal available, and feeding it to the session lets the emulator run
  *    one frame per tick instead of racing its own timer against the panel's.
- *    (The Odyssey 2 runs at 59.98 Hz, near enough a 60 Hz panel to lock;
- *    on a panel far from that the session paces it on the wall clock.)
+ *    (The Odyssey 2 runs at 59.83 Hz, near enough a 60 Hz panel to lock;
+ *    the Videopac's 49.70 Hz and any panel far from the console's rate are
+ *    paced on the wall clock by the session.)
  *
  *  - Frames are pulled by serial, not pushed. copy_frame does nothing when
  *    the emulator has not produced a new frame, so a tick that arrives
  *    between frames costs a mutex and no memcpy.
  *
- * The CDP1861's frame is always 100 x 246 (MAME's visible area: the 64 x 128
- * picture inside the blanking the chip draws nothing into), white on black,
- * so the texture is the same size every time.
+ * The 8244/8245's frame is always 360 x 243 (MAME's visible area), XRGB, so
+ * the texture is the same size every time.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -29,8 +29,8 @@
 #define FB_W O2SESSION_FB_WIDTH
 #define FB_H O2SESSION_FB_HEIGHT
 
-/* A television showed the whole visible area at 4:3: each of the 1861's
- * dots about three and a third lines wide. */
+/* A television showed the whole visible area at 4:3, so the 8244's pixels
+ * are not square on it (a little narrower than they are tall). */
 #define TV_ASPECT (4.0 / 3.0)
 
 /* ---- frame buffer pool ----------------------------------------------------
@@ -234,11 +234,9 @@ static void o2_display_snapshot(GtkWidget *widget, GtkSnapshot *snapshot)
     if (!self->texture || w <= 0 || h <= 0)
         return;
 
-    /* TV mode is the picture as a television showed it: the whole 100 x
-     * 246 area filling a 4:3 screen, so the 1861's 64 x 128 pixels are the
-     * familiar wide blocks. Square pixels show the raw buffer -- a very tall
-     * 100:246 strip -- which is useful for pixel work and honest about
-     * nothing else. */
+    /* TV mode is the picture as a television showed it: the whole 360 x 243
+     * area filling a 4:3 screen. Square pixels show the buffer's own 360:243
+     * shape, which is what pixel work wants. */
     want = self->tv_aspect ? TV_ASPECT : (double)FB_W / (double)FB_H;
 
     if ((double)w / (double)h > want) {

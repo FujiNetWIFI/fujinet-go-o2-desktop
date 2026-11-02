@@ -19,10 +19,10 @@ uint32_t O2KeysymFromEvent(NSEvent *event);
 /* The keysym for a modifier flag change (flagsChanged), or 0. Sets *down. */
 uint32_t O2KeysymFromFlagsChange(NSEvent *event, int *down);
 
-/* This app's accent colour (O2SESSION_ACCENT_RGB): the console case's
- * tan. For fills and highlights with dark text on them. */
+/* This app's accent colour (O2SESSION_ACCENT_RGB): the Odyssey 2's power-button
+ * red. For fills and highlights with white text on them. */
 NSColor *O2AccentColor(void);
 
-/* The accent for TEXT and thin strokes: the tan is too pale on a light
- * appearance, so there it is O2SESSION_ACCENT_DARK_RGB instead. */
+/* The accent for TEXT and thin strokes: on a light appearance the red is
+ * O2SESSION_ACCENT_DARK_RGB (the console's reset key) instead. */
 NSColor *O2AccentTextColor(void);

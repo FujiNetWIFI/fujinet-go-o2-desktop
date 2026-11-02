@@ -24,13 +24,23 @@ QColor o2AccentColor()
                   O2SESSION_ACCENT_RGB & 0xff);
 }
 
+QColor o2AccentDarkColor()
+{
+    return QColor((O2SESSION_ACCENT_DARK_RGB >> 16) & 0xff,
+                  (O2SESSION_ACCENT_DARK_RGB >> 8) & 0xff,
+                  O2SESSION_ACCENT_DARK_RGB & 0xff);
+}
+
 QColor o2AccentTextColor(const QWidget *w)
 {
     /* a light theme is one whose window background is light */
     if (w && w->palette().color(QPalette::Window).lightness() < 128) return o2AccentColor();
-    return QColor((O2SESSION_ACCENT_DARK_RGB >> 16) & 0xff,
-                  (O2SESSION_ACCENT_DARK_RGB >> 8) & 0xff,
-                  O2SESSION_ACCENT_DARK_RGB & 0xff);
+    return o2AccentDarkColor();
+}
+
+QString o2AccentFill()
+{
+    return QStringLiteral("background: %1; color: white;").arg(o2AccentColor().name());
 }
 
 void fujinet_log_show(QWidget *parent, o2session *session)

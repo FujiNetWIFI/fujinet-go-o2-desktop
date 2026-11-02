@@ -9,6 +9,12 @@
 
 #include "o2session.h"
 
+bool o2IsAppKey(const QKeyEvent *e)
+{
+    const int k = e->key();
+    return k == Qt::Key_F9 || k == Qt::Key_F11 || k == Qt::Key_F12;
+}
+
 uint32_t o2KeysymFromQt(const QKeyEvent *e)
 {
     /* On X11 and Wayland Qt reports the X keycode, which is the evdev code

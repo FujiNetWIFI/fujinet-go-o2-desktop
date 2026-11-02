@@ -1,12 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=FujiNet Go Odyssey 2 (GNOME)
-GenericName=Magnavox Odyssey 2 Emulator
-Comment=Magnavox Odyssey 2 with built-in FujiNet
+GenericName=Magnavox Odyssey 2 / Philips Videopac Emulator
+Comment=Magnavox Odyssey 2 and Philips Videopac with built-in FujiNet
 Exec=fujinet-go-o2-gnome %f
 Icon=online.fujinet.go.o2.gnome
 Terminal=false
 Categories=Game;Emulator;
-Keywords=RCA;Odyssey 2;COSMAC;1802;FujiNet;emulator;retro;
-MimeType=application/x-o2-rom;
+Keywords=Magnavox;Odyssey 2;Videopac;Philips;8048;FujiNet;emulator;retro;
 StartupNotify=true

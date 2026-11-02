@@ -14,8 +14,10 @@
   </dependency>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <!-- Per-monitor DPI: the display is a nearest-neighbour blit, so a
-           system-DPI-scaled window would be resampled twice and look soft. -->
+      <!-- Per-monitor DPI: the picture is drawn at the window's own pixels
+           (sharp-bilinear on a swap chain the size of the client), so a
+           system-DPI-scaled window would be resampled twice and look soft;
+           every window lays itself out in 96-dpi units (win_common.h). -->
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2,permonitor</dpiAwareness>
       <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
     </windowsSettings>

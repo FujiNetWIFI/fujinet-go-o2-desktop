@@ -1,10 +1,13 @@
 /*
  * symbols -- the debugger's label tables: built-in names for the console's
- * RAM and ports and for the FujiNet cartridge's mailbox, text engine and
- * raster, plus whatever symbol files the user loads.
+ * BIOS entry points and interrupt vectors, the cartridge's entry vectors and
+ * the FujiNet cartridge's mailbox status page, plus whatever symbol files the
+ * user loads.
  *
- * The Odyssey 2 has no banking: every label matches any bank. The bank field
- * stays (the family's table format, and a WLA-DX "BB:AAAA" file still reads).
+ * Labels name program addresses (12 bits). The MCS-48's MB latch makes the
+ * 2K halves look like banks to a static listing, but a label belongs to an
+ * address, not to a bank: every label matches any bank. The bank field stays
+ * (the family's table format, and a WLA-DX "BB:AAAA" file still reads).
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -58,9 +61,10 @@ int  symtab_load(symtab *t, const char *path, char *msg, int msgsz);
 /* For completion: the i-th label name, NULL past the end. */
 const char *symtab_name_at(symtab *t, int i);
 
-/* The name of an I/O port as the console decodes it (INP 1 "DISPLAY_ON",
- * OUT 2 "KEYLATCH"), or NULL. */
-const char *o2_port_name(uint8_t port, int is_out);
+/* The name of an external-data (MOVX) address the FujiNet cartridge decodes:
+ * $E0 "FN_W_REGSEL" ... $E3 "FN_W_SEQ", or NULL. The VDC's registers are named
+ * by the chip itself (o2debug_vdc_describe). */
+const char *o2_xdata_name(uint8_t addr);
 
 /* symbols_builtin.c */
 void symtab_add_builtins(symtab *t);

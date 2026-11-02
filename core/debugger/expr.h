@@ -5,7 +5,9 @@
  *   numbers     $C000  0xC000  C000h  49152  %1010
  *   names       whatever the context resolves: registers, flags, labels,
  *               vpos/hpos/frame/cycles, and value/addr in a condition
- *   memory      [expr] byte, {expr} word (little-endian), side-effect free
+ *   memory      [expr] a program-space byte, and one per address space:
+ *               p[expr] program, x[expr] external data, i[expr] internal
+ *               RAM, v[expr] the VDC's registers -- all side-effect free
  *   operators   C's, with C's precedence: unary - ! ~, * / %, + -, << >>,
  *               < <= > >=, == !=, &, ^, |, &&, ||
  *
@@ -25,8 +27,9 @@ extern "C" {
 typedef struct {
     /* A name to a value; return 1 if known. */
     int (*name)(void *user, const char *name, long *out);
-    /* A byte of memory, without side effects. */
-    uint8_t (*read8)(void *user, uint16_t addr);
+    /* A byte of memory, without side effects. space is the o2debug_space
+     * (0 program, 1 external data, 2 internal RAM, 3 the VDC). */
+    uint8_t (*read8)(void *user, int space, uint16_t addr);
     void *user;
 } expr_ctx;
 
