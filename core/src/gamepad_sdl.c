@@ -1,6 +1,6 @@
 /*
- * gamepad_sdl -- SDL3 gamepads (and unmapped joysticks) as Odyssey 2 keypads,
- * on their own polling thread.
+ * gamepad_sdl -- SDL3 gamepads (and unmapped joysticks) as Odyssey 2
+ * joysticks, on their own polling thread.
  *
  * A polling thread rather than SDL's event queue on the UI thread: this
  * app's video belongs to GTK/Qt/AppKit/Win32, not SDL, and only the gamepad
@@ -11,16 +11,15 @@
  * mapping for (a plain HID adapter) is opened as a raw joystick instead:
  * its buttons and hats are bindable in the raw bands, just unnamed.
  *
- * What a pad drives is its keypad (A for the first, B for the second): the
- * D-pad (and, with "analog sticks" on, the left stick as an eight-way switch
- * with hysteresis) is the keys the Odyssey 2's games steer with -- 2 4 6 8,
- * with a diagonal on its corner key, 1 3 7 9, not on two keys at once; the
- * buttons come from the bindings table.
- *
- * Buttons go through the bindings table (a keypad's keys, the console's
- * CLEAR, the system actions); a D-pad direction the user has bound to
- * something explicit stops also nudging the directional role. Ported from
- * the SMS sibling's gamepad_sdl.c.
+ * What a pad drives is a stick (1 for the first pad, 2 for the second).
+ * Every button goes through the bindings table: by default the D-pad is the
+ * stick's four directions and South its button, and a button may be bound to
+ * a keyboard key or RESET instead. With "analog sticks" on, the left analog
+ * stick also drives the directions, as an eight-way switch with hysteresis
+ * (and so does hat 0 of a raw joystick). The three ways of holding an input
+ * -- a pad button, the analog stick, the keyboard -- are separate sources in
+ * the session, so letting go of one never releases another. Ported from the
+ * Studio II sibling's gamepad_sdl.c.
  *
  * Pads are assigned to ports in connection order unless assigned explicitly.
  * A pad that is unplugged and plugged back in (matched by its SDL GUID and
@@ -43,7 +42,7 @@
 #include "gamepad_sdl.h"
 #include "session_internal.h"
 
-#define MAX_PADS 8
+#define MAX_PADS O2_MAX_PADS
 #define MAX_HATS 4
 
 /* A third of full deflection engages, a sixth releases: low enough that a
@@ -55,13 +54,18 @@
 
 typedef struct {
     SDL_JoystickID id;
+    int owner;                /* the session's source number for this pad: stable
+                               * while it is connected, whatever its slot */
     SDL_Gamepad *handle;      /* mapped gamepad, or NULL */
     SDL_Joystick *joy;        /* raw joystick when not a gamepad */
     int assign;               /* explicit port, -1 = automatic */
     int port;                 /* the port it drove on the last poll, or -1 */
     int stick_dir;            /* left stick's four-way state (hysteresis) */
-    int dpad_dir;             /* D-pad / hat 0 state */
-    uint8_t sent[O2_ACT_PER_PORT]; /* directional actions currently held */
+    uint8_t sent[O2_ACT_PER_PORT]; /* directions the analog stick / hat holds */
+    /* What each button's press asserted (target + 1, 0 = nothing), so its
+     * release lets go of exactly that even if the binding changed meanwhile,
+     * and a pad that goes away drops what it held. */
+    int16_t btn_target[256];
     SDL_GUID guid;
     char name[64];
     int trigger_down[2];
@@ -88,17 +92,15 @@ static gamepad_state *g_state;   /* one per process: SDL's subsystem is */
 
 /* ---- pure helpers ----------------------------------------------------------- */
 
-int o2_key_from_dir(int dir)
+unsigned o2_acts_from_dir(int dir)
 {
-    /* rows top to bottom, columns left to right, as on the keypad */
-    static const int keys[3][3] = { { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 } };
-    int row = 1, col = 1;
+    unsigned acts = 0;
 
-    if ((dir & O2_DIR_UP) && !(dir & O2_DIR_DOWN)) row = 0;
-    if ((dir & O2_DIR_DOWN) && !(dir & O2_DIR_UP)) row = 2;
-    if ((dir & O2_DIR_LEFT) && !(dir & O2_DIR_RIGHT)) col = 0;
-    if ((dir & O2_DIR_RIGHT) && !(dir & O2_DIR_LEFT)) col = 2;
-    return keys[row][col];
+    if ((dir & O2_DIR_UP) && !(dir & O2_DIR_DOWN)) acts |= 1u << O2_ACT_UP;
+    if ((dir & O2_DIR_DOWN) && !(dir & O2_DIR_UP)) acts |= 1u << O2_ACT_DOWN;
+    if ((dir & O2_DIR_LEFT) && !(dir & O2_DIR_RIGHT)) acts |= 1u << O2_ACT_LEFT;
+    if ((dir & O2_DIR_RIGHT) && !(dir & O2_DIR_LEFT)) acts |= 1u << O2_ACT_RIGHT;
+    return acts;
 }
 
 int o2_dir_from_stick(float x, float y, int prev, float enter, float exit)
@@ -189,12 +191,17 @@ static const char *slot_name(const pad_slot *slot)
 
 static void slot_release_all(gamepad_state *g, pad_slot *slot)
 {
-    int a;
-    if (slot->port < 0) return;
-    for (a = 0; a < O2_ACT_PER_PORT; a++)
-        if (slot->sent[a]) {
-            slot->sent[a] = 0;
-            session_gamepad_apply(g->session, slot->port, a, 0);
+    int a, b;
+    if (slot->port >= 0)
+        for (a = 0; a < O2_ACT_PER_PORT; a++)
+            if (slot->sent[a]) {
+                slot->sent[a] = 0;
+                session_gamepad_stick(g->session, slot->owner, slot->port, a, 0);
+            }
+    for (b = 0; b < (int)(sizeof slot->btn_target / sizeof slot->btn_target[0]); b++)
+        if (slot->btn_target[b]) {
+            session_gamepad_press(g->session, slot->owner, slot->btn_target[b] - 1, 0);
+            slot->btn_target[b] = 0;
         }
 }
 
@@ -224,8 +231,12 @@ static void open_pad(gamepad_state *g, SDL_JoystickID id)
         SDL_Joystick *j = gp ? NULL : SDL_OpenJoystick(id);
         if (gp || j) {
             pad_slot *slot = &g->pads[g->npads++];
-            int h;
+            int h, used = 0, k;
+            for (k = 0; k < g->npads - 1; k++)
+                used |= 1 << g->pads[k].owner;
             memset(slot, 0, sizeof *slot);
+            for (k = 0; k < MAX_PADS && (used & (1 << k)); k++) {}
+            slot->owner = k;
             slot->id = id;
             slot->handle = gp;
             slot->joy = j;
@@ -249,7 +260,7 @@ static void open_pad(gamepad_state *g, SDL_JoystickID id)
                 char msg[128];
                 int port = effective_port_locked(g, g->npads - 1);
                 if (port >= 0)
-                    snprintf(msg, sizeof msg, "Connected: %s (keypad %c)", slot->name, 'A' + port);
+                    snprintf(msg, sizeof msg, "Connected: %s (player %d)", slot->name, port + 1);
                 else
                     snprintf(msg, sizeof msg, "Connected: %s", slot->name);
                 session_gamepad_event(g->session, msg);
@@ -300,7 +311,7 @@ static int effective_port_locked(gamepad_state *g, int idx)
 
 static void dispatch_button(gamepad_state *g, SDL_JoystickID which, int b, int down)
 {
-    int idx, port, target;
+    int idx, port, owner = 0, target = -1;
     if (b == O2_PAD_BTN_NONE) return;
 
     pthread_mutex_lock(&g->lock);
@@ -314,20 +325,27 @@ static void dispatch_button(gamepad_state *g, SDL_JoystickID which, int b, int d
     }
     idx = slot_for_id(g, which);
     port = idx >= 0 ? effective_port_locked(g, idx) : -1;
+    if (idx >= 0 && port >= 0 && b >= 0 && b < 256) {
+        pad_slot *slot = &g->pads[idx];
+        owner = slot->owner;
+        if (down) {
+            target = o2session_target_for_button(g->session, port, b);
+            if (target >= 0 && target < O2_TARGET_SYSACT(0))
+                slot->btn_target[b] = (int16_t)(target + 1);
+        } else if (slot->btn_target[b]) {
+            /* what the press asserted, whatever the binding says now */
+            target = slot->btn_target[b] - 1;
+            slot->btn_target[b] = 0;
+        }
+    }
     pthread_mutex_unlock(&g->lock);
-    if (port < 0) return;
-
-    target = o2session_target_for_button(g->session, port, b);
     if (target < 0) return;
+
     if (target >= O2_TARGET_SYSACT(0)) {
         if (down) o2session_sysaction_post(g->session, target - O2_TARGET_SYSACT(0));
         return;
     }
-    if (target < 2 * O2_ACT_PER_PORT)
-        session_gamepad_apply(g->session, target / O2_ACT_PER_PORT,
-                              target % O2_ACT_PER_PORT, down);
-    else
-        o2session_press(g->session, target, down);
+    session_gamepad_press(g->session, owner, target, down);
 }
 
 static int hat_dir_from_mask(Uint8 mask)
@@ -383,22 +401,12 @@ static void slot_stick(const pad_slot *slot, int right, float *x, float *y)
     }
 }
 
-static int slot_dpad(gamepad_state *g, const pad_slot *slot, int port)
+/* The raw joystick's hat 0 as directions (a mapped gamepad's D-pad is a
+ * button, bound like any other). */
+static int slot_hat_dir(const pad_slot *slot)
 {
     int dir = 0;
-    if (slot->handle) {
-        /* a D-pad direction the user bound explicitly no longer plays the
-         * directional role -- otherwise a button remapped to a keypad key
-         * would also nudge the joystick every poll */
-        if (o2session_target_for_button(g->session, port, O2_PAD_BTN_DPAD_UP) < 0
-            && SDL_GetGamepadButton(slot->handle, SDL_GAMEPAD_BUTTON_DPAD_UP)) dir |= O2_DIR_UP;
-        if (o2session_target_for_button(g->session, port, O2_PAD_BTN_DPAD_DOWN) < 0
-            && SDL_GetGamepadButton(slot->handle, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) dir |= O2_DIR_DOWN;
-        if (o2session_target_for_button(g->session, port, O2_PAD_BTN_DPAD_LEFT) < 0
-            && SDL_GetGamepadButton(slot->handle, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) dir |= O2_DIR_LEFT;
-        if (o2session_target_for_button(g->session, port, O2_PAD_BTN_DPAD_RIGHT) < 0
-            && SDL_GetGamepadButton(slot->handle, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) dir |= O2_DIR_RIGHT;
-    } else if (SDL_GetNumJoystickHats(slot->joy) > 0) {
+    if (!slot->handle && slot->joy && SDL_GetNumJoystickHats(slot->joy) > 0) {
         Uint8 m = SDL_GetJoystickHat(slot->joy, 0);
         if (m & SDL_HAT_UP) dir |= O2_DIR_UP;
         if (m & SDL_HAT_DOWN) dir |= O2_DIR_DOWN;
@@ -408,15 +416,11 @@ static int slot_dpad(gamepad_state *g, const pad_slot *slot, int port)
     return dir;
 }
 
-static void want_action(uint8_t *want, int act, int on)
-{
-    if (on) want[act] = 1;
-}
-
 static void poll_one(gamepad_state *g, pad_slot *slot, int port)
 {
     const struct o2session *s = g->session;
     uint8_t want[O2_ACT_PER_PORT];
+    unsigned acts;
     int dir, a;
     float lx, ly;
 
@@ -429,24 +433,23 @@ static void poll_one(gamepad_state *g, pad_slot *slot, int port)
         if (port < 0) return;
     }
 
-    slot->dpad_dir = slot_dpad(g, slot, port);
-    slot_stick(slot, 0, &lx, &ly);
-
-    dir = slot->dpad_dir;
+    dir = slot_hat_dir(slot);
     if (s->opts.analog_joystick) {
+        slot_stick(slot, 0, &lx, &ly);
         slot->stick_dir = o2_dir_from_stick(lx, ly, slot->stick_dir, STICK_ENTER, STICK_EXIT);
         dir |= slot->stick_dir;
+    } else {
+        slot->stick_dir = 0;
     }
-    {
-        const int key = o2_key_from_dir(dir);
-        /* opposite directions together cancel to the centre: nothing */
-        want_action(want, key, key != 5);
-    }
+    /* opposite directions together cancel: nothing */
+    acts = o2_acts_from_dir(dir);
+    for (a = 0; a < O2_ACT_PER_PORT; a++)
+        want[a] = (uint8_t)((acts >> a) & 1u);
 
     for (a = 0; a < O2_ACT_PER_PORT; a++) {
         if (want[a] != slot->sent[a]) {
             slot->sent[a] = want[a];
-            session_gamepad_apply(g->session, port, a, want[a]);
+            session_gamepad_stick(g->session, slot->owner, port, a, want[a]);
         }
     }
 
@@ -459,7 +462,10 @@ static void poll_one(gamepad_state *g, pad_slot *slot, int port)
             int down = v >= TRIGGER_ON;
             if (down != slot->trigger_down[t]) {
                 slot->trigger_down[t] = down;
+                /* dispatch_button takes the lock poll_sticks holds */
+                pthread_mutex_unlock(&g->lock);
                 dispatch_button(g, slot->id, t ? O2_PAD_BTN_RIGHT_TRIGGER : O2_PAD_BTN_LEFT_TRIGGER, down);
+                pthread_mutex_lock(&g->lock);
             }
         }
     }
@@ -532,9 +538,9 @@ static void *thread_main(void *arg)
         poll_sticks(g);
         /* ~60 Hz while a pad is attached (the machine's own sampling rate).
          * With none there are only hotplug events to notice, which can wait
-         * a tenth of a second. (Not SDL_WaitEventTimeout: SDL polls inside
-         * it at about 1 kHz.) */
-        SDL_Delay(npads > 0 ? 16 : 100);
+         * half a second. (Not SDL_WaitEventTimeout: SDL polls inside it at
+         * about 1 kHz.) */
+        SDL_Delay(npads > 0 ? 16 : 500);
     }
 
     pthread_mutex_lock(&g->lock);

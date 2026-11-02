@@ -1,14 +1,15 @@
 /*
  * gamepad_map_test -- the gamepad layer end to end with an SDL3 virtual
- * gamepad: hot-plug pickup, the default mapping onto the keypad (South = 0,
- * East = 5, the D-pad and the left stick as 2 4 6 8 with the diagonals on
- * 1 3 7 9) and the console's CLEAR (Start), and hot-unplug releasing
- * everything the pad held -- with no hardware and no human.
+ * gamepad: hot-plug pickup, the default mapping onto the joystick (the D-pad
+ * is the stick's four directions, South is its button, the left analog stick
+ * steers too), a button rebound to a matrix key and to the console's RESET,
+ * the sources not stepping on each other, and hot-unplug releasing everything
+ * the pad held -- with no hardware and no human.
  *
- * What the pad holds is read back through o2session_buttons_held and
- * o2session_switch_held, which report the same per-source bits the machine
- * is driven from. SKIPs (77) where SDL has no virtual joysticks or a
- * machine's real pads leave no port free.
+ * What the pad holds is read back through o2session_buttons_held,
+ * o2session_key_held and o2session_switch_held, which report the same
+ * per-source bits the machine is driven from. SKIPs (77) where SDL has no
+ * virtual joysticks or a machine's real pads leave no port free.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -26,7 +27,7 @@
 #define PAD_NAME "o2test virtual pad"
 
 static int failures;
-static int vport;   /* the keypad the virtual pad was given */
+static int vport;   /* the stick the virtual pad was given */
 
 static void sleep_ms(int ms)
 {
@@ -36,20 +37,21 @@ static void sleep_ms(int ms)
 
 /* The pad thread syncs devices a few times a second and polls state
  * faster; give it two seconds. */
-static void expect(o2session *s, unsigned want, int clear, const char *what)
+static void expect(o2session *s, unsigned want, int key, int reset, const char *what)
 {
     unsigned held = 0;
-    int c = 0;
+    int k = 0, r = 0;
     for (int i = 0; i < 100; i++) {
         held = o2session_buttons_held(s, vport);
-        c = o2session_switch_held(s, O2_SW_CLEAR);
-        if (held == want && c == clear) {
+        k = o2session_key_held(s, 24);
+        r = o2session_switch_held(s, O2_SW_RESET);
+        if (held == want && k == key && r == reset) {
             printf("ok: %s\n", what);
             return;
         }
         sleep_ms(20);
     }
-    printf("FAIL: %s (held %03X want %03X, CLEAR %d/%d)\n", what, held, want, c, clear);
+    printf("FAIL: %s (held %02X want %02X, key Q %d/%d, RESET %d/%d)\n", what, held, want, k, key, r, reset);
     failures++;
 }
 
@@ -121,48 +123,76 @@ int main(void)
         o2session_free(s);
         return o2session_gamepad_count(s) <= baseline ? 1 : 77;
     }
-    printf("ok: the virtual pad was picked up as keypad %c\n", 'A' + vport);
+    printf("ok: the virtual pad was picked up as stick %d\n", vport + 1);
 
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_SOUTH, true);
-    expect(s, B(O2_ACT_0), 0, "South is key 0");
+    expect(s, B(O2_ACT_FIRE), 0, 0, "South is the button");
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_SOUTH, false);
-    expect(s, 0, 0, "released");
+    expect(s, 0, 0, 0, "released");
 
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_EAST, true);
-    expect(s, B(O2_ACT_5), 0, "East is key 5");
+    expect(s, 0, 0, 0, "East is nothing by default");
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_EAST, false);
-    expect(s, 0, 0, "released");
 
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
-    expect(s, B(O2_ACT_2), 0, "D-pad up is key 2");
-    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, false);
+    expect(s, B(O2_ACT_UP), 0, 0, "D-pad up is up");
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_LEFT, true);
-    expect(s, B(O2_ACT_4), 0, "D-pad left is key 4");
-    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
-    expect(s, B(O2_ACT_1), 0, "up and left together are key 1, not 2 and 4");
+    expect(s, B(O2_ACT_UP) | B(O2_ACT_LEFT), 0, 0, "up and left together are a diagonal");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+    expect(s, B(O2_ACT_LEFT), 0, 0, "up and down together cancel");
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, false);
+    expect(s, B(O2_ACT_LEFT) | B(O2_ACT_DOWN), 0, 0, "and down is back once up lets go");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_DOWN, false);
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_LEFT, false);
-    expect(s, 0, 0, "released");
+    expect(s, 0, 0, 0, "released");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
+    expect(s, B(O2_ACT_RIGHT), 0, 0, "D-pad right is right");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
+    expect(s, 0, 0, 0, "released");
 
     /* the stick past its threshold steers too (a pad that reports its D-pad
      * as axes would otherwise drive nothing) */
     SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFTX, 20000);
     SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFTY, 20000);
-    expect(s, B(O2_ACT_9), 0, "the stick right and down is key 9");
+    expect(s, B(O2_ACT_RIGHT) | B(O2_ACT_DOWN), 0, 0, "the stick right and down is right and down");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
     SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFTX, 0);
+    expect(s, B(O2_ACT_RIGHT) | B(O2_ACT_DOWN), 0, 0,
+           "the D-pad holds right when the analog stick lets go of it: the sources are separate");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, false);
     SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFTY, 0);
-    expect(s, 0, 0, "centred");
+    expect(s, 0, 0, 0, "centred");
 
+    /* a button bound to a matrix key, and to the console's RESET */
+    o2session_binding_set_button(s, O2_TARGET_KEY(24), O2_PAD_BTN_EAST, NULL, 0);
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_EAST, true);
+    expect(s, 0, 1, 0, "East, bound to Q, holds the key");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_EAST, false);
+    expect(s, 0, 0, 0, "released");
+    o2session_binding_set_button(s, O2_TARGET_SWITCH(O2_SW_RESET), O2_PAD_BTN_START, NULL, 0);
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_START, true);
-    expect(s, 0, 1, "Start is CLEAR");
+    expect(s, 0, 0, 1, "Start, bound to RESET, holds it");
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_START, false);
-    expect(s, 0, 0, "released");
+    expect(s, 0, 0, 0, "released");
 
-    /* hot-unplug while held: the keypad is released, not left holding the
-     * last direction forever */
+    /* a D-pad direction rebound elsewhere stops steering */
+    o2session_binding_set_button(s, O2_TARGET_KEY(24), O2_PAD_BTN_DPAD_UP, NULL, 0);
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
+    expect(s, 0, 1, 0, "D-pad up, bound to Q, is Q and not up any more");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, false);
+    expect(s, 0, 0, 0, "released");
+    o2session_bindings_reset(s);
+
+    /* hot-unplug while held: the stick, a key and RESET are released, not
+     * left holding forever */
+    o2session_binding_set_button(s, O2_TARGET_KEY(24), O2_PAD_BTN_EAST, NULL, 0);
+    o2session_binding_set_button(s, O2_TARGET_SWITCH(O2_SW_RESET), O2_PAD_BTN_START, NULL, 0);
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_RIGHT, true);
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_SOUTH, true);
-    expect(s, B(O2_ACT_6) | B(O2_ACT_0), 0, "held before the unplug");
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_EAST, true);
+    SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_START, true);
+    SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFTY, -20000);
+    expect(s, B(O2_ACT_RIGHT) | B(O2_ACT_FIRE) | B(O2_ACT_UP), 1, 1, "held before the unplug");
     SDL_CloseJoystick(vj);
     SDL_DetachVirtualJoystick(vid);
     for (i = 0; i < 100 && o2session_gamepad_count(s) != baseline; i++)
@@ -174,7 +204,8 @@ int main(void)
                o2session_gamepad_count(s), baseline);
         failures++;
     }
-    expect(s, 0, 0, "and its keypad is released");
+    expect(s, 0, 0, 0, "and its stick, key and RESET are released");
+    o2session_bindings_reset(s);
 
     o2session_stop(s);
     o2session_free(s);

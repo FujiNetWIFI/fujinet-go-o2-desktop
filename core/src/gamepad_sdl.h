@@ -21,11 +21,10 @@ extern "C" {
 #define O2_DIR_LEFT  4
 #define O2_DIR_RIGHT 8
 
-/* The keypad key a direction steers with, as the Odyssey 2's games read
- * them: 2 up, 8 down, 4 left, 6 right, and a diagonal on its corner key (1
- * 3 7 9). Opposite directions cancel. Returns the key (0-9), with 5 for no
- * direction (callers test the direction first). Pure. */
-int o2_key_from_dir(int dir);
+/* The stick directions a set of direction bits holds, as a mask over
+ * o2_action (bit n = action n: UP RIGHT DOWN LEFT). Opposite directions
+ * cancel, so a stick pushed both ways holds neither. Pure. */
+unsigned o2_acts_from_dir(int dir);
 
 /* An analog stick as an eight-way switch with hysteresis: an axis engages
  * past `enter` and releases below `exit` (both 0..1 of full deflection),

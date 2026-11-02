@@ -34,23 +34,27 @@ int main(void)
     check(o2_dir_from_stick(0.6f, 0.05f, 0, 0.35f, 0.15f) == O2_DIR_RIGHT,
           "a pure horizontal picks up no vertical noise");
 
-    /* directions as the games' keys */
-    check(o2_key_from_dir(O2_DIR_UP) == 2 && o2_key_from_dir(O2_DIR_DOWN) == 8 &&
-          o2_key_from_dir(O2_DIR_LEFT) == 4 && o2_key_from_dir(O2_DIR_RIGHT) == 6,
-          "up, down, left, right are 2, 8, 4, 6");
-    check(o2_key_from_dir(O2_DIR_UP | O2_DIR_LEFT) == 1 &&
-          o2_key_from_dir(O2_DIR_UP | O2_DIR_RIGHT) == 3 &&
-          o2_key_from_dir(O2_DIR_DOWN | O2_DIR_LEFT) == 7 &&
-          o2_key_from_dir(O2_DIR_DOWN | O2_DIR_RIGHT) == 9,
-          "a diagonal is its corner key");
-    check(o2_key_from_dir(O2_DIR_UP | O2_DIR_DOWN) == 5 && o2_key_from_dir(0) == 5,
-          "opposites cancel to the centre");
+    /* directions as the stick's switches */
+#define ACT(a) (1u << (a))
+    check(o2_acts_from_dir(O2_DIR_UP) == ACT(O2_ACT_UP) &&
+          o2_acts_from_dir(O2_DIR_DOWN) == ACT(O2_ACT_DOWN) &&
+          o2_acts_from_dir(O2_DIR_LEFT) == ACT(O2_ACT_LEFT) &&
+          o2_acts_from_dir(O2_DIR_RIGHT) == ACT(O2_ACT_RIGHT),
+          "up, down, left, right are the stick's four switches");
+    check(o2_acts_from_dir(O2_DIR_UP | O2_DIR_LEFT) == (ACT(O2_ACT_UP) | ACT(O2_ACT_LEFT)) &&
+          o2_acts_from_dir(O2_DIR_DOWN | O2_DIR_RIGHT) == (ACT(O2_ACT_DOWN) | ACT(O2_ACT_RIGHT)),
+          "a diagonal is two switches");
+    check(o2_acts_from_dir(O2_DIR_UP | O2_DIR_DOWN) == 0 && o2_acts_from_dir(0) == 0 &&
+          o2_acts_from_dir(O2_DIR_LEFT | O2_DIR_RIGHT) == 0,
+          "opposites cancel");
+    check(o2_acts_from_dir(O2_DIR_UP | O2_DIR_DOWN | O2_DIR_LEFT) == ACT(O2_ACT_LEFT),
+          "a cancelled axis leaves the other one alone");
 
     /* port assignment */
     assign[0] = -1; assign[1] = -1; assign[2] = -1;
     check(o2_pad_for_port(assign, 2, 0) == 0 && o2_pad_for_port(assign, 2, 1) == 1,
-          "connection order: first pad keypad A, second keypad B");
-    check(o2_pad_for_port(assign, 1, 1) == -1, "one pad leaves keypad B to the keyboard");
+          "connection order: first pad stick 1, second pad stick 2");
+    check(o2_pad_for_port(assign, 1, 1) == -1, "one pad leaves stick 2 to the keyboard");
     assign[0] = 1; assign[1] = -1;
     check(o2_pad_for_port(assign, 2, 1) == 0 && o2_pad_for_port(assign, 2, 0) == 1,
           "an explicit assignment wins and the other pad fills the gap");

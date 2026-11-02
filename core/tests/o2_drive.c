@@ -4,12 +4,14 @@
  * For exploring CONFIG and checking a flow end to end; built, not
  * registered.
  *
- *   o2_drive [--cart image] [--bios file] [--import-sd file]... SCRIPT
+ *   o2_drive [--cart image] [--rom file|zip|folder]... [--import-sd file]... SCRIPT
  *
  * SCRIPT is a sequence of words:
  *   wait:MS            let the machine run
  *   press:TARGET[:MS]  hold a control (default 100 ms), then release it;
- *                      TARGET is a0-a9 / b0-b9 (keypad A / B), clear, or
+ *                      TARGET is a key's label (q, 7, enter, clear, space, yes,
+ *                      no, plus, minus, times, divide, equals, dot, ?), j1up,
+ *                      j1down, j1left, j1right, j1fire (and j2...), reset, or
  *                      config (Reset to CONFIG)
  *   shot:NAME          write the current frame to NAME.ppm
  *   status             print the cartridge's status
@@ -17,7 +19,7 @@
  *   text               print the cart's text engine screen
  *
  * Settings and data go in a fresh tree under $TMPDIR; --bios imports a
- * BIOS into it (never the user's own ROM directory). The FujiNet runtime
+ * ROM or zip or folder into it (never the user's own ROM directory). The FujiNet runtime
  * takes stdout and stderr for its Console Log and changes directory, so
  * this prints to its own copy of stdout and resolves NAME against the
  * directory it started in.
@@ -46,15 +48,42 @@ static void sleep_ms(int ms)
     nanosleep(&ts, NULL);
 }
 
-/* a0-a9, b0-b9, clear; config is a system action (-2) */
+/* a key's label, jNdir / jNfire, reset; config is a system action (-2) */
 static int target_of(const char *name)
 {
-    if ((name[0] == 'a' || name[0] == 'b') && name[1] >= '0' && name[1] <= '9' && !name[2])
-        return O2_TARGET_PORT(name[0] - 'a', O2_ACT_0 + (name[1] - '0'));
-    if (!strcmp(name, "clear"))
-        return O2_TARGET_SWITCH(O2_SW_CLEAR);
+    int n;
+    const o2_keycap *caps = o2session_keyboard_layout(O2_MACHINE_ODYSSEY2, &n, NULL, NULL);
+    static const char *const dirs[] = { "up", "right", "down", "left", "fire" };
+
+    if (name[0] == 'j' && (name[1] == '1' || name[1] == '2'))
+    {
+        for (int d = 0; d < 5; d++)
+            if (!strcmp(name + 2, dirs[d]))
+                return O2_TARGET_PORT(name[1] - '1', d);
+        return -1;
+    }
+    if (!strcmp(name, "reset"))
+        return O2_TARGET_SWITCH(O2_SW_RESET);
     if (!strcmp(name, "config"))
         return -2;
+    for (int i = 0; i < n; i++)
+    {
+        const char *l = caps[i].label;
+        char low[16];
+        int k = 0;
+        for (; l[k] && k < 15; k++)
+            low[k] = (char)((l[k] >= 'A' && l[k] <= 'Z') ? l[k] + 32 : l[k]);
+        low[k] = 0;
+        if (caps[i].target >= 0 && !strcmp(low, name))
+            return O2_TARGET_KEY(caps[i].target);
+    }
+    if (!strcmp(name, "plus"))   return O2_TARGET_KEY(16);
+    if (!strcmp(name, "minus"))  return O2_TARGET_KEY(40);
+    if (!strcmp(name, "times"))  return O2_TARGET_KEY(41);
+    if (!strcmp(name, "divide")) return O2_TARGET_KEY(42);
+    if (!strcmp(name, "equals")) return O2_TARGET_KEY(43);
+    if (!strcmp(name, "dot"))    return O2_TARGET_KEY(39);
+    if (!strcmp(name, "space"))  return O2_TARGET_KEY(12);
     return -1;
 }
 
@@ -86,7 +115,9 @@ static void shot(o2session *s, const char *name)
 int main(int argc, char **argv)
 {
     char cfg[512], data[512], st[160], dest[1200], msg[256];
-    const char *cart = NULL, *bios = NULL;
+    const char *cart = NULL;
+    const char *roms[16];
+    int nroms = 0;
     o2session_paths p;
     o2session *s;
     o2session_start_opts o;
@@ -114,19 +145,17 @@ int main(int argc, char **argv)
     {
         if (!strcmp(argv[i], "--cart"))
             cart = argv[++i];
-        else if (!strcmp(argv[i], "--bios"))
-            bios = argv[++i];
+        else if (!strcmp(argv[i], "--rom") && nroms < 16)
+            roms[nroms++] = argv[++i];
         else if (!strcmp(argv[i], "--import-sd"))
             i++;   /* after start: the SD tree exists once FujiNet is up */
         else
             break;
     }
-    if (bios)
+    for (int r = 0; r < nroms; r++)
     {
-        if (o2session_import_bios(s, bios, msg, sizeof msg) != 0)
-            fprintf(out, "bios: %s\n", msg);
-        else
-            fprintf(out, "bios: %s\n", msg);
+        int n = o2session_rom_import(s, roms[r], msg, sizeof msg);
+        fprintf(out, "rom %s: %d imported (%s)\n", roms[r], n, msg);
     }
 
     o2session_default_opts(s, &o);
@@ -181,7 +210,8 @@ int main(int argc, char **argv)
             else if (!strcmp(w, "status"))
             {
                 o2session_cart_status(s, st, sizeof st);
-                fprintf(out, "status: %s (booted %d)\n", st, o2session_cart_booted_game(s));
+                fprintf(out, "status: %s (booted %d, missing %u)\n", st,
+                        o2session_cart_booted_game(s), o2session_missing(s));
             }
             else if (!strncmp(w, "until:", 6))
             {

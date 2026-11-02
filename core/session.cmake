@@ -7,6 +7,8 @@ set(O2_SESSION_SOURCES
   src/paths.c
   src/media.c
   src/roms.c
+  src/zipread.c
+  src/keyboard.c
   src/fujinet_runtime.c
   src/audio_sdl.c
   src/bindings.c
@@ -14,7 +16,11 @@ set(O2_SESSION_SOURCES
   src/gamepad_sdl.c
   src/debug.c)
 
-# The embedded ROM table: empty unless WITH_O2_ROMS (see COMPLIANCE.md).
+# The embedded ROM table: empty unless WITH_O2_ROMS (see COMPLIANCE.md). With
+# it ON the developer's own images in tools/roms/ (the console BIOS, the
+# character sets, The Voice's speech ROMs, loose or in MAME's zips) are
+# compiled in for local development only; the shipping builds are OFF and
+# core/tests/no_embedded_roms.py checks the binaries.
 set(O2_ROMS_C "${CMAKE_CURRENT_BINARY_DIR}/roms_embedded.c")
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(WITH_O2_ROMS)
@@ -24,7 +30,7 @@ if(WITH_O2_ROMS)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/roms/embed-roms.py"
             "${O2_ROMS_C}" "${CMAKE_SOURCE_DIR}/tools/roms"
     DEPENDS "${CMAKE_SOURCE_DIR}/tools/roms/embed-roms.py" ${O2_ROM_INPUTS}
-    COMMENT "Embedding the BIOS images in tools/roms (WITH_O2_ROMS=ON: NOT redistributable)"
+    COMMENT "Embedding the ROM images in tools/roms (WITH_O2_ROMS=ON: NOT redistributable)"
     VERBATIM)
 else()
   add_custom_command(

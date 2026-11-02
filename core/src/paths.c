@@ -1,7 +1,7 @@
 /*
  * o2session path layout: XDG config/data directories, the cartridge
- * directory, the ROM directory (imported BIOS and patch ROMs) and the
- * FujiNet runtime tree. Transposed from the NES port's paths.c (same
+ * directory, the ROM directory (the imported BIOS, character sets and
+ * speech ROMs) and the FujiNet runtime tree. Transposed from the NES port's paths.c (same
  * author, same license).
  *
  * Copyright (C) 2026 Thomas Cherryhomes
@@ -79,6 +79,11 @@ static int mkdir_p(const char *path)
     }
     if (make_dir(buf) != 0 && errno != EEXIST) return -1;
     return 0;
+}
+
+int paths_mkdir_p(const char *path)
+{
+    return mkdir_p(path);
 }
 
 /* Per-user config/data directory. On Windows this is %APPDATA% (config) or
@@ -177,8 +182,7 @@ int paths_init(struct o2session *s, const char *config_dir,
         session_set_error(s, "cannot create cartridge dir %s", s->carts_dir);
         return -1;
     }
-    /* The imported BIOS (roms.c);
-     * O2_ROM_DIR overrides, as COLECO_ROM_DIR does on the ColecoVision. */
+    /* The imported ROMs (roms.c); O2_ROM_DIR overrides it (the tests). */
     {
         const char *env = getenv("O2_ROM_DIR");
         if (env && *env)

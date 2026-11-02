@@ -2,15 +2,14 @@
  * hid_keys -- native key code <-> USB HID Keyboard usage translation, and
  * the names for those usages.
  *
- * WHY THIS EXISTS: o2session.h's curated O2SESSION_KEYSYM_* symbols name
- * only the keys the *default* controller and ECS keyboard maps care about --
- * a couple of dozen out of the ~120 a USB keyboard can report. Everything
- * else used to translate to keysym 0, which a keypad window's Map mode reads
- * as "not a key" and silently discards. That made a console-to-USB
- * adapter unmappable: the Ultimate PC Interface's ECS-keyboard and
- * Music-Synthesizer personalities are HID keyboards emitting usages a normal
- * PC keyboard has no cap for, so the keys the user most needed to bind were
- * exactly the ones that could not be captured.
+ * WHY THIS EXISTS: o2session.h's curated O2_KEYSYM_* symbols name only the
+ * keys the *default* maps care about -- a few dozen out of the ~120 a USB
+ * keyboard can report. Everything else used to translate to keysym 0, which
+ * the controllers window's Map mode reads as "not a key" and silently
+ * discards. That made a keyboard with keys a normal PC keyboard has no cap
+ * for (international, media, the G7400's Cntl and Break stand-ins) unmappable,
+ * so the keys the user most needed to bind were exactly the ones that could
+ * not be captured.
  *
  * The HID Keyboard usage page is the right common currency for the fallback
  * band: it is what the device actually puts on the wire, and every host key
@@ -20,8 +19,8 @@
  * ALL THREE TABLES COMPILE EVERYWHERE, on purpose. The maintainer has no
  * Windows machine (cmake/toolchains/mingw-w64.cmake's own header says so),
  * and the bug this file fixes was a Windows-only translation gap that no
- * Linux test could see. Keeping the tables host-independent lets
- * core/tests/hid_keys_test.c check the Windows and macOS ones from Linux CI.
+ * Linux test could see. Keeping the tables host-independent lets a Linux
+ * test check the Windows and macOS ones.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later

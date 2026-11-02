@@ -14,7 +14,7 @@
 #include <stdint.h>
 
 typedef struct {
-    const char *file;          /* MAME's file name: "84932.ic11" */
+    const char *file;          /* MAME's file name: "o2bios.rom" */
     const uint8_t *data;
     uint32_t size;
 } o2_embedded_rom;

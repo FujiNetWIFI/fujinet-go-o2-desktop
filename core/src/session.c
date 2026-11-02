@@ -1,12 +1,12 @@
 /*
  * session.c -- the frontend contract (core/include/o2session.h) over the
- * Magnavox Odyssey 2 host (core/o2/host.h).
+ * Magnavox Odyssey 2 / Philips Videopac host (core/o2/host.h).
  *
- * The C modules beside it (settings, paths, media, roms, audio, gamepads,
- * bindings) share the session struct through session_internal.h; this file
- * owns the lifecycle, the power cycles, the cartridges, the input routing
- * and the cartridge status. Ported from the SMS sibling's session.c (itself
- * the NES sibling's session.cpp, minus MesenCE).
+ * The C modules beside it (settings, paths, media, roms, keyboard, audio,
+ * gamepads, bindings) share the session struct through session_internal.h;
+ * this file owns the lifecycle, the power cycles, the cartridges, the input
+ * routing and the cartridge status. Ported from the Studio II sibling's
+ * session.c.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -22,12 +22,22 @@
 #include "bindings.h"
 #include "o2debug.h"
 #include "host.h"
+#include "carts.h"
 #include "fuji_mailbox.h"
-#include "s2map.h"
+#include "o2map.h"
 
-/* The largest image the cartridge plans (a 256-byte ST2 header and 64
- * blocks), with room to say "too big" rather than truncate. */
-#define CART_MAX (S2MAP_IMAGE_MAX + 1u)
+/* The largest image the cartridge serves: an APPBANK image (a fixed 1K and up
+ * to 31 pages of 2K), with room to say "too big" rather than truncate. */
+#define CART_MAX (O2_APP_FIXED_BYTES + O2_APP_MAXPAGES * O2_APP_PAGE_BYTES + 1u)
+
+/* ---- the machines ----------------------------------------------------------- */
+
+/* o2_machine_name() and o2_machine_is_pal() are the machine's (machine.c). */
+
+static int clamp_machine(int machine)
+{
+    return machine >= 0 && machine < O2_MACHINE_COUNT ? machine : O2_MACHINE_ODYSSEY2;
+}
 
 /* ---- helpers shared with the C modules ----------------------------------- */
 
@@ -85,6 +95,7 @@ o2session *o2session_new(const o2session_paths *paths)
     pthread_mutex_init(&s->settings_mtx, NULL);
     pthread_mutex_init(&s->sysact_mtx, NULL);
     pthread_mutex_init(&s->pad_event_mtx, NULL);
+    pthread_mutex_init(&s->input_mtx, NULL);
 
     if (paths_init(s, paths ? paths->config_dir : NULL,
                    paths ? paths->data_dir : NULL) != 0) {
@@ -116,13 +127,16 @@ void o2session_free(o2session *s)
     pthread_mutex_destroy(&s->settings_mtx);
     pthread_mutex_destroy(&s->sysact_mtx);
     pthread_mutex_destroy(&s->pad_event_mtx);
+    pthread_mutex_destroy(&s->input_mtx);
     free(s);
 }
 
 void o2session_default_opts(o2session *s, o2session_start_opts *opts)
 {
     memset(opts, 0, sizeof *opts);
+    opts->machine = clamp_machine(o2session_get_int(s, "machine", O2_MACHINE_ODYSSEY2));
     opts->use_bios = o2session_get_int(s, "use_bios", 1);
+    opts->voice = o2session_get_int(s, "voice", 0);
     opts->analog_joystick = o2session_get_int(s, "analog_joystick", 1);
     opts->enable_fujinet = o2session_get_int(s, "enable_fujinet", 1);
     opts->external_fujinet = o2session_get_int(s, "fujinet_external", 0);
@@ -133,6 +147,16 @@ void o2session_default_opts(o2session *s, o2session_start_opts *opts)
     if (opts->cart_path && !opts->cart_path[0])
         opts->cart_path = NULL;
 }
+
+/* ---- images: what a cartridge file is ---------------------------------------- */
+
+typedef struct {
+    int app;                  /* a FujiNet app: claims the mailbox */
+    int type;                 /* o2_cart_type of a game (O2_CART_FUJINET for an app) */
+    bool needs_voice;         /* the game carries speech data of its own */
+    o2map_plan_t plan;        /* what the FujiNet cartridge makes of the image */
+    o2map_err_t plan_err;
+} cart_info;
 
 static uint8_t *read_cart(const char *path, uint32_t *len, char *why, int whysz)
 {
@@ -160,56 +184,281 @@ static uint8_t *read_cart(const char *path, uint32_t *len, char *why, int whysz)
     if (got >= CART_MAX) {
         free(buf);
         snprintf(why, (size_t)whysz,
-                 "the image is larger than the cartridge can serve ("
-                 O2_CART_MAX_TEXT " bytes)");
+                 "the image is larger than the cartridge can serve (%u bytes)",
+                 (unsigned)(CART_MAX - 1));
         return NULL;
     }
     *len = (uint32_t)got;
     return buf;
 }
 
+/* Identify an image. A FujiNet app is one the cartridge firmware's own
+ * planner says claims the mailbox (an APPBANK image, or a bank layout with
+ * "FUJI" at $F2C); anything else is a game, which is MAME's cartridge for its
+ * CRC and size (the mapper the host puts in the slot). 1 if the image can
+ * run, else 0 and why (the Chess and Home Computer modules, a mapper that
+ * cannot take the size). */
+static int analyse_image(const uint8_t *img, uint32_t len, cart_info *ci,
+                         char *why, int whysz)
+{
+    const char *err = NULL;
+    o2_cart_t tmp;
+
+    memset(ci, 0, sizeof *ci);
+    if (why && whysz > 0)
+        why[0] = '\0';
+    ci->plan_err = o2map_plan(img, len, &ci->plan);
+    if (ci->plan_err == O2MAP_OK && ci->plan.mailbox_ok) {
+        ci->app = 1;
+        ci->type = O2_CART_FUJINET;
+        return 1;
+    }
+    ci->type = o2_cart_identify(img, len, &ci->needs_voice);
+    if (o2_cart_init(&tmp, ci->type, img, len, &err) != 0) {
+        if (why && whysz > 0)
+            snprintf(why, (size_t)whysz, "%s", err ? err : "the cartridge cannot be mapped");
+        return 0;
+    }
+    return 1;
+}
+
+static int check_image(const char *path, cart_info *out, char *why, int whysz)
+{
+    uint8_t *img;
+    uint32_t len = 0;
+    char err[256];
+    char abs[O2_PATH_MAX];
+    cart_info ci;
+    int ok;
+
+    if (why && whysz > 0)
+        why[0] = '\0';
+    memset(&ci, 0, sizeof ci);
+    if (out)
+        *out = ci;
+    if (!path || !*path)
+        return 0;
+    path = paths_resolve(path, abs, sizeof abs);
+    img = read_cart(path, &len, err, sizeof err);
+    if (!img) {
+        if (why && whysz > 0)
+            snprintf(why, (size_t)whysz, "%s", err);
+        return 0;
+    }
+    ok = analyse_image(img, len, &ci, why, whysz);
+    free(img);
+    if (out)
+        *out = ci;
+    return ok;
+}
+
+int o2session_check_cart(const char *path, char *why, int whysz)
+{
+    return check_image(path, NULL, why, whysz);
+}
+
+int o2session_cart_is_app(const char *path)
+{
+    cart_info ci;
+    return check_image(path, &ci, NULL, 0) && ci.app;
+}
+
+/* Whether the FujiNet cartridge itself can serve the image (a network boot of
+ * it from the SD folder): a whole number of 2K or 3K banks, or an APPBANK
+ * image. A game of any other size still runs from the slot as its own
+ * cartridge, so check_cart allows it; the SD folder is for what CONFIG can
+ * boot. */
+int session_cart_plan_check(const char *path, char *why, int whysz)
+{
+    cart_info ci;
+
+    if (!check_image(path, &ci, why, whysz))
+        return 0;
+    if (ci.plan_err != O2MAP_OK) {
+        if (why && whysz > 0)
+            snprintf(why, (size_t)whysz, "the FujiNet cartridge cannot serve it: %s",
+                     o2map_strerror(ci.plan_err));
+        return 0;
+    }
+    return 1;
+}
+
+/* What the console would be missing to run this image (NULL: just power on)
+ * with the ROMs imported now: 1 if it can, else 0 and why; *recoverable is
+ * set when importing a ROM fixes it. */
+static int requirements(struct o2session *s, int machine, int use_bios,
+                        const cart_info *ci, int *recoverable, char *why, int whysz)
+{
+    const int plus = machine == O2_MACHINE_VIDEOPAC_PLUS;
+
+    *recoverable = 0;
+    if (plus && !o2session_have_bios(s, machine)) {
+        *recoverable = 1;
+        snprintf(why, (size_t)whysz,
+                 "The Videopac+ G7400 needs its BIOS: Machine > Import BIOS...");
+        return 0;
+    }
+    if (ci && !ci->app && !(plus || (use_bios && o2session_have_bios(s, machine)))) {
+        *recoverable = 1;
+        if (!use_bios && o2session_have_bios(s, machine))
+            snprintf(why, (size_t)whysz,
+                     "This cartridge needs the BIOS, which is switched off in "
+                     "Preferences (Machine > Use the imported BIOS).");
+        else
+            snprintf(why, (size_t)whysz,
+                     "This cartridge needs the BIOS. Use Machine > Import BIOS... to add "
+                     "your own copy (CONFIG and the FujiNet apps run without it).");
+        return 0;
+    }
+    if (ci && ci->needs_voice && !(o2session_have_voice(s) &&
+        o2session_rom_item_available(s, O2_ROM_VOICE_SID))) {
+        *recoverable = 1;
+        snprintf(why, (size_t)whysz,
+                 "This cartridge speaks through The Voice and needs its speech ROMs "
+                 "(sp0256b-019.bin, spr128-003.bin and spr128-004.bin): Machine > Import BIOS...");
+        return 0;
+    }
+    return 1;
+}
+
+/* ---- powering the machine -------------------------------------------------------- */
+
+static void free_host_roms(struct o2session *s)
+{
+    for (size_t i = 0; i < sizeof s->host_roms / sizeof s->host_roms[0]; i++) {
+        free(s->host_roms[i]);
+        s->host_roms[i] = NULL;
+    }
+}
+
 /* Bring the machine up with s->opts and the given image (NULL: CONFIG). */
 static int host_up(struct o2session *s, const char *cart_path)
 {
     o2_host_opts_t ho;
-    uint8_t *cart = NULL, *bios = NULL;
-    uint32_t cart_len = 0, bios_len = 0;
+    cart_info ci;
+    uint8_t *cart = NULL, *bios = NULL, *font = NULL, *font_ef = NULL;
+    uint8_t *vrom = NULL, *vspeech = NULL, *vgame = NULL;
+    uint32_t cart_len = 0, bios_len = 0, font_len = 0, font_ef_len = 0;
+    uint32_t vrom_len = 0, vspeech_len = 0, vgame_len = 0;
+    const int machine = s->opts.machine;
+    const int plus = machine == O2_MACHINE_VIDEOPAC_PLUS;
+    unsigned missing = 0;
     char why[256];
-    int rc;
+    int rc, recoverable = 0;
 
     memset(&ho, 0, sizeof ho);
+    memset(&ci, 0, sizeof ci);
+    free_host_roms(s);
+    s->refusal_recoverable = 0;
+
     if (cart_path && *cart_path) {
         cart = read_cart(cart_path, &cart_len, why, sizeof why);
         if (!cart) {
             session_set_error(s, "%s", why);
             return -1;
         }
+        if (!analyse_image(cart, cart_len, &ci, why, sizeof why)) {
+            session_set_error(s, "%s", why);
+            free(cart);
+            return -1;
+        }
     }
-    if (s->opts.use_bios)
-        bios = roms_load_bios(s, &bios_len);
+    if (!requirements(s, machine, s->opts.use_bios, cart ? &ci : NULL, &recoverable,
+                      why, sizeof why)) {
+        session_set_error(s, "%s", why);
+        s->refusal_recoverable = recoverable;
+        free(cart);
+        return -1;
+    }
+
+    /* the console's BIOS, or none: the stand-in runs CONFIG and the apps */
+    if (plus || s->opts.use_bios)
+        bios = roms_load(s, plus ? O2_ROM_BIOS_G7400 : O2_ROM_BIOS, &bios_len);
+    if ((plus || (cart && !ci.app)) && !bios) {
+        session_set_error(s, "The BIOS could not be read from %s", s->roms_dir);
+        free(cart);
+        return -1;
+    }
+
+    /* the video chips' character sets: without them text is blank, which the
+     * missing mask says */
+    font = roms_load(s, O2_ROM_FONT_8244, &font_len);
+    if (plus)
+        font_ef = roms_load(s, O2_ROM_FONT_EF9340, &font_ef_len);
+    if (!font || (plus && !font_ef))
+        missing |= O2_MISSING_FONT;
+
+    /* The Voice, in front of the cartridge: asked for in Preferences, or a
+     * game that speaks needs it (requirements() has seen to its ROMs) */
+    if (s->opts.voice || ci.needs_voice) {
+        vrom = roms_load(s, O2_ROM_VOICE_INTERNAL, &vrom_len);
+        vspeech = roms_load(s, O2_ROM_VOICE_SPEECH, &vspeech_len);
+        if (ci.needs_voice)
+            vgame = roms_load(s, O2_ROM_VOICE_SID, &vgame_len);
+        if (vrom && vspeech && (vgame || !ci.needs_voice)) {
+            ho.voice = true;
+        } else {
+            missing |= O2_MISSING_VOICE;
+            free(vrom); free(vspeech); free(vgame);
+            vrom = vspeech = vgame = NULL;
+        }
+    }
+
+    s->host_roms[0] = bios;
+    s->host_roms[1] = font;
+    s->host_roms[2] = font_ef;
+    s->host_roms[3] = vrom;
+    s->host_roms[4] = vspeech;
+    s->host_roms[5] = vgame;
 
     /* The cartridge dials FujiNet's BoIP port -- the in-process runtime's,
      * or a standalone fujinet-pc's when the runtime is switched off or
-     * external. A
-     * session whose FujiNet is disabled outright (fujinet_lib "", the tests)
-     * dials nothing, so it can never pick up someone else's FujiNet (and
-     * Windows' two-second refusal of a closed port never holds up power-on). */
+     * external. A session whose FujiNet is disabled outright (fujinet_lib "",
+     * the tests) dials nothing, so it can never pick up someone else's FujiNet
+     * (and Windows' two-second refusal of a closed port never holds up
+     * power-on). */
     if (s->fujinet_disabled)
         s->boip_endpoint[0] = '\0';
+    ho.machine = machine;
     ho.bios = bios;
     ho.bios_size = bios_len;
+    ho.font = font;
+    ho.font_size = font_len;
+    ho.font_ef = font_ef;
+    ho.font_ef_size = font_ef_len;
+    ho.voice_rom = vrom;
+    ho.voice_rom_size = vrom_len;
+    ho.voice_speech = vspeech;
+    ho.voice_speech_size = vspeech_len;
+    ho.voice_game = vgame;
+    ho.voice_game_size = vgame_len;
     ho.cart = cart;
     ho.cart_size = cart_len;
+    ho.cart_type = cart ? ci.type : O2_CART_FUJINET;
+    ho.cart_app = cart ? ci.app != 0 : true;
     ho.boip_hostport = s->boip_endpoint;
     ho.cart_sync = getenv("O2_CART_SYNC") != NULL;
-    ho.mame_power_on = getenv("O2_MAME_POWER_ON") != NULL;
 
     rc = o2_host_start(&ho);
-    if (rc != 0)
+    if (rc != 0) {
         session_set_error(s, "%s", o2_host_last_error());
+        free_host_roms(s);
+    } else {
+        s->run_machine = machine;
+        s->run_game = cart && !ci.app;
+        s->run_missing = missing;
+    }
     free(cart);
-    free(bios);
     return rc;
+}
+
+/* The machine options the settings name now: an Import BIOS or a Preferences
+ * change takes effect at the next power cycle, which reads them here. */
+static void reload_machine_opts(struct o2session *s)
+{
+    s->opts.machine = clamp_machine(o2session_get_int(s, "machine", s->opts.machine));
+    s->opts.use_bios = o2session_get_int(s, "use_bios", s->opts.use_bios);
+    s->opts.voice = o2session_get_int(s, "voice", s->opts.voice);
 }
 
 /* A power cycle: the machine and the cartridge come up fresh; FujiNet stays
@@ -218,9 +467,7 @@ static int power_cycle(struct o2session *s, const char *cart_path)
 {
     int rc;
 
-    /* the console powers up with the BIOS its settings name now: an Import
-     * BIOS or a Preferences change takes effect here */
-    s->opts.use_bios = o2session_get_int(s, "use_bios", 1);
+    reload_machine_opts(s);
 
     o2debug_before_power_cycle(s);
     o2_host_stop();
@@ -228,9 +475,11 @@ static int power_cycle(struct o2session *s, const char *cart_path)
     if (rc != 0 && cart_path) {
         /* whatever was running is gone: put CONFIG back */
         char err[256];
+        int recoverable = s->refusal_recoverable;
         snprintf(err, sizeof err, "%s", s->last_error);
         host_up(s, NULL);
         snprintf(s->last_error, sizeof s->last_error, "%s", err);
+        s->refusal_recoverable = recoverable;
     }
     o2debug_after_power_cycle(s);
     return rc;
@@ -249,6 +498,7 @@ static void set_cart(struct o2session *s, const char *path)
 static void adopt_opts(struct o2session *s, const o2session_start_opts *opts)
 {
     s->opts = *opts;
+    s->opts.machine = clamp_machine(opts->machine);
     if (opts->cart_path) {
         char abs[O2_PATH_MAX];
         snprintf(s->cart_path, sizeof s->cart_path, "%s",
@@ -264,6 +514,8 @@ static void adopt_opts(struct o2session *s, const o2session_start_opts *opts)
 int o2session_start(o2session *s, const o2session_start_opts *opts)
 {
     o2session_start_opts local;
+    char why[256];
+    int recoverable;
 
     if (s->running)
         return 0;
@@ -274,7 +526,17 @@ int o2session_start(o2session *s, const o2session_start_opts *opts)
         opts = &local;
     }
     adopt_opts(s, opts);
+
+    /* a Videopac+ G7400 cannot run on the stand-in: say so before anything
+     * else starts */
+    if (!requirements(s, s->opts.machine, s->opts.use_bios, NULL, &recoverable,
+                      why, sizeof why)) {
+        session_set_error(s, "%s", why);
+        return -1;
+    }
+
     memset(s->pad_src, 0, sizeof s->pad_src);
+    memset(s->key_src, 0, sizeof s->key_src);
     memset(s->sw_src, 0, sizeof s->sw_src);
     o2_host_release_all();
     o2debug_trace_fujinet(s);
@@ -311,13 +573,19 @@ int o2session_start(o2session *s, const o2session_start_opts *opts)
             fujinet_wait_for_boip(s, 3000);
     }
 
-    /* A remembered cartridge that no longer loads (moved, or an image the
-     * cartridge cannot map) must not leave the app unbootable: fall back to
-     * CONFIG and say why. */
+    /* A remembered cartridge that no longer loads (moved, an image the
+     * console cannot take, a ROM since deleted) must not leave the app
+     * unbootable: fall back to CONFIG and say why. The setting is kept when an
+     * import would fix it, so the cartridge is back after one. */
     if (host_up(s, s->opts.cart_path) != 0) {
         if (s->opts.cart_path) {
+            const int keep = s->refusal_recoverable;
             fprintf(stderr, "o2: %s: %s; booting CONFIG\n", s->cart_path, s->last_error);
-            set_cart(s, NULL);
+            if (keep) {
+                s->cart_path[0] = '\0';
+                s->opts.cart_path = NULL;
+            } else
+                set_cart(s, NULL);
             if (host_up(s, NULL) != 0) {
                 fujinet_stop(s);
                 return -1;
@@ -350,6 +618,7 @@ void o2session_stop(o2session *s)
     gamepad_stop(s);
     o2debug_before_power_cycle(s);
     o2_host_stop();
+    free_host_roms(s);
     fujinet_stop(s);
     s->fujinet_external = 0;
     s->running = 0;
@@ -390,65 +659,29 @@ int o2session_restart(o2session *s)
 
 /* ---- cartridges ------------------------------------------------------------ */
 
-/* Read and plan an image: 1 if the cartridge can serve it (*claims set when
- * it is a FujiNet app), else 0 and why. */
-static int check_image(const char *path, int *claims, char *why, int whysz)
-{
-    uint8_t *img;
-    uint32_t len = 0;
-    char err[256];
-    char abs[O2_PATH_MAX];
-    bool app = false;
-    int ok;
-
-    if (why && whysz > 0)
-        why[0] = '\0';
-    if (claims)
-        *claims = 0;
-    if (!path || !*path)
-        return 0;
-    path = paths_resolve(path, abs, sizeof abs);
-    img = read_cart(path, &len, err, sizeof err);
-    if (!img) {
-        if (why && whysz > 0)
-            snprintf(why, (size_t)whysz, "%s", err);
-        return 0;
-    }
-    ok = o2_cart_check_image(img, len, &app, why, whysz);
-    free(img);
-    if (claims)
-        *claims = app;
-    return ok;
-}
-
-int o2session_check_cart(const char *path, char *why, int whysz)
-{
-    return check_image(path, NULL, why, whysz);
-}
-
-int o2session_cart_is_app(const char *path)
-{
-    int app = 0;
-    return check_image(path, &app, NULL, 0) && app;
-}
-
 int o2session_load_cart(o2session *s, const char *path)
 {
     char why[256];
     char abs[O2_PATH_MAX];
-    int app = 0;
+    cart_info ci;
+    int recoverable;
 
     if (!s->running || !path || !*path)
         return -1;
     path = paths_resolve(path, abs, sizeof abs);
-    if (!check_image(path, &app, why, sizeof why)) {
+    if (!check_image(path, &ci, why, sizeof why)) {
         session_set_error(s, "%s", why);
+        s->refusal_recoverable = 0;
         return -1;
     }
-    /* a game is BIOS byte-code: the stand-in cannot run it */
-    if (!app && !(o2session_get_int(s, "use_bios", 1) && o2session_have_bios(s))) {
-        session_set_error(s, "This cartridge needs the Magnavox Odyssey 2 BIOS. Use Import BIOS "
-                             "to add your own copy (the FujiNet apps and CONFIG run without it).");
+    /* A game is BIOS byte-code (the stand-in cannot run it) and a speaking
+     * one needs The Voice: refuse before touching the running machine. The
+     * power cycle reads the machine settings, so judge by them. */
+    if (!requirements(s, clamp_machine(o2session_get_int(s, "machine", s->opts.machine)),
+                      o2session_get_int(s, "use_bios", s->opts.use_bios), &ci, &recoverable,
+                      why, sizeof why)) {
+        session_set_error(s, "%s", why);
+        s->refusal_recoverable = recoverable;
         return -1;
     }
     if (power_cycle(s, path) != 0) {
@@ -464,17 +697,12 @@ const char *o2session_cart_path(const o2session *s)
     return s->cart_path;
 }
 
-int o2session_clear(o2session *s)
+int o2session_reset(o2session *s)
 {
     if (!s->running)
         return -1;
-    o2_host_clear_pulse();
+    o2_host_reset_pulse();
     return 0;
-}
-
-int o2session_needs_bios(o2session *s)
-{
-    return s->running && o2_host_needs_bios();
 }
 
 int o2session_reset_to_config(o2session *s)
@@ -488,6 +716,32 @@ int o2session_reset_to_config(o2session *s)
 int o2session_eject(o2session *s)
 {
     return o2session_reset_to_config(s);
+}
+
+/* What the running configuration lacks: the stand-in met a game (the host
+ * saw it), and what was not handed to the host at power-up. Both clear at the
+ * next power cycle that has the ROMs. */
+unsigned o2session_missing(o2session *s)
+{
+    if (!s->running)
+        return 0;
+    return (o2_host_missing() & O2_MISSING_BIOS) | s->run_missing;
+}
+
+int o2session_needs_bios(o2session *s)
+{
+    return (o2session_missing(s) & O2_MISSING_BIOS) != 0;
+}
+
+void o2session_set_paused(o2session *s, int paused)
+{
+    if (s->running)
+        o2_host_set_paused(paused != 0);
+}
+
+int o2session_is_paused(const o2session *s)
+{
+    return s->running && o2_host_is_paused();
 }
 
 /* ---- video / audio --------------------------------------------------------- */
@@ -512,8 +766,9 @@ uint64_t o2session_frame_count(o2session *s)
 
 int o2session_refresh_rate(o2session *s)
 {
-    (void)s;
-    return 60;
+    const int machine = s->running ? s->run_machine
+        : clamp_machine(o2session_get_int(s, "machine", O2_MACHINE_ODYSSEY2));
+    return o2_machine_is_pal(machine) ? 50 : 60;
 }
 
 void o2session_notify_vsync(o2session *s, int64_t frame_time_ns)
@@ -550,50 +805,81 @@ void o2session_set_volume(o2session *s, int percent)
 
 /* ---- input ----------------------------------------------------------------- */
 
-static void apply_pad(struct o2session *s, int port)
+/* The console's view of a stick: a real one is a set of switches, so
+ * opposite directions cancel (MAME's inputs are 8-way for the same reason).
+ * input_mtx held. */
+static unsigned stick_mask_locked(const struct o2session *s, int port)
 {
-    uint16_t mask = 0;
+    unsigned mask = 0;
+
     for (int a = 0; a < O2_ACT_PER_PORT; a++)
         if (s->pad_src[port][a])
-            mask |= (uint16_t)(1u << a);
-    o2_host_keypad_set(port, mask);
+            mask |= 1u << a;
+    if ((mask & (1u << O2_ACT_UP)) && (mask & (1u << O2_ACT_DOWN)))
+        mask &= ~((1u << O2_ACT_UP) | (1u << O2_ACT_DOWN));
+    if ((mask & (1u << O2_ACT_LEFT)) && (mask & (1u << O2_ACT_RIGHT)))
+        mask &= ~((1u << O2_ACT_LEFT) | (1u << O2_ACT_RIGHT));
+    return mask;
 }
 
-static void pad_src(struct o2session *s, int port, int act, int down, uint8_t src)
+static void push_stick_locked(struct o2session *s, int port)
 {
-    if (down)
-        s->pad_src[port][act] |= src;
-    else
-        s->pad_src[port][act] &= (uint8_t)~src;
-    apply_pad(s, port);
+    /* o2_action's order is the host's bit order: UP RIGHT DOWN LEFT BUTTON */
+    o2_host_stick_set(port, (uint8_t)stick_mask_locked(s, port));
 }
 
-static void switch_src(struct o2session *s, int sw, int down, uint8_t src)
+static void push_matrix_locked(struct o2session *s)
+{
+    uint64_t matrix = 0;
+
+    for (int k = 0; k < O2_KEY_COUNT; k++)
+        if (s->key_src[k])
+            matrix |= 1ull << k;
+    o2_host_keys_set(matrix);
+}
+
+static void push_reset_locked(struct o2session *s)
+{
+    o2_host_reset_set(s->sw_src[O2_SW_RESET] != 0);
+}
+
+static void set_src(uint32_t *word, uint32_t src, int down)
 {
     if (down)
-        s->sw_src[sw] |= src;
+        *word |= src;
     else
-        s->sw_src[sw] &= (uint8_t)~src;
-    if (sw == O2_SW_CLEAR)
-        o2_host_clear_set(s->sw_src[sw] != 0);
+        *word &= ~src;
+}
+
+/* One source of one target; sysactions are not held inputs and are left to
+ * the caller. */
+static void source_press(struct o2session *s, int target, uint32_t src, int down)
+{
+    pthread_mutex_lock(&s->input_mtx);
+    if (target < 2 * O2_ACT_PER_PORT) {
+        const int port = target / O2_ACT_PER_PORT;
+        set_src(&s->pad_src[port][target % O2_ACT_PER_PORT], src, down);
+        push_stick_locked(s, port);
+    } else if (target < O2_TARGET_SWITCH(0)) {
+        set_src(&s->key_src[target - O2_TARGET_KEY(0)], src, down);
+        push_matrix_locked(s);
+    } else if (target < O2_TARGET_SYSACT(0)) {
+        set_src(&s->sw_src[target - O2_TARGET_SWITCH(0)], src, down);
+        push_reset_locked(s);
+    }
+    pthread_mutex_unlock(&s->input_mtx);
 }
 
 void o2session_press(o2session *s, int target, int down)
 {
     if (!s->running || target < 0 || target >= O2_TARGET_COUNT)
         return;
-
-    if (target < 2 * O2_ACT_PER_PORT) {
-        pad_src(s, target / O2_ACT_PER_PORT, target % O2_ACT_PER_PORT, down, 1);
+    if (target >= O2_TARGET_SYSACT(0)) {
+        if (down)
+            o2session_sysaction(s, target - O2_TARGET_SYSACT(0));
         return;
     }
-    target -= 2 * O2_ACT_PER_PORT;
-    if (target < O2_SW_COUNT) {
-        switch_src(s, target, down, 1);
-        return;
-    }
-    if (down)
-        o2session_sysaction(s, target - O2_SW_COUNT);
+    source_press(s, target, SRC_KEYBOARD, down);
 }
 
 void o2session_sysaction(o2session *s, int sysact)
@@ -642,29 +928,81 @@ int o2session_sysaction_take(o2session *s, int *out)
 
 unsigned o2session_buttons_held(o2session *s, int port)
 {
-    unsigned held = 0;
+    unsigned held;
     if (port < 0 || port > 1)
         return 0;
-    for (int a = 0; a < O2_ACT_PER_PORT; a++)
-        if (s->pad_src[port][a])
-            held |= 1u << a;
+    pthread_mutex_lock(&s->input_mtx);
+    held = stick_mask_locked(s, port);
+    pthread_mutex_unlock(&s->input_mtx);
+    return held;
+}
+
+int o2session_key_held(o2session *s, int key)
+{
+    int held;
+    if (key < 0 || key >= O2_KEY_COUNT)
+        return 0;
+    pthread_mutex_lock(&s->input_mtx);
+    held = s->key_src[key] != 0;
+    pthread_mutex_unlock(&s->input_mtx);
     return held;
 }
 
 int o2session_switch_held(o2session *s, int sw)
 {
+    int held;
     if (sw < 0 || sw >= O2_SW_COUNT)
         return 0;
-    return s->sw_src[sw] != 0;
+    pthread_mutex_lock(&s->input_mtx);
+    held = s->sw_src[sw] != 0;
+    pthread_mutex_unlock(&s->input_mtx);
+    return held;
 }
 
-/* The gamepad thread's entry point: the same routing as press, from the
- * pad's own source bit, never touching the settings or the debugger. */
-void session_gamepad_apply(struct o2session *s, int port, int act, int down)
+/* Everything the keyboard and the controllers window hold, let go (focus
+ * loss): what a key's press asserted, whichever way it was asserted. A
+ * gamepad's own holds are left to the gamepad. */
+static void release_keyboard_sources(struct o2session *s)
 {
-    if (!s->running || port < 0 || port > 1 || act < 0 || act >= O2_ACT_PER_PORT)
+    pthread_mutex_lock(&s->input_mtx);
+    for (int port = 0; port < 2; port++) {
+        for (int a = 0; a < O2_ACT_PER_PORT; a++)
+            s->pad_src[port][a] &= ~SRC_KEYBOARD;
+        push_stick_locked(s, port);
+    }
+    for (int k = 0; k < O2_KEY_COUNT; k++)
+        s->key_src[k] &= ~SRC_KEYBOARD;
+    push_matrix_locked(s);
+    for (int w = 0; w < O2_SW_COUNT; w++)
+        s->sw_src[w] &= ~SRC_KEYBOARD;
+    push_reset_locked(s);
+    pthread_mutex_unlock(&s->input_mtx);
+}
+
+void o2session_release_all(o2session *s)
+{
+    if (!s)
         return;
-    pad_src(s, port, act, down, 2);
+    memset(s->held_keysym, 0, sizeof s->held_keysym);
+    release_keyboard_sources(s);
+}
+
+/* The gamepad thread's entry points: the same routing, from the pad's own
+ * source bits, never touching the settings or the debugger. */
+void session_gamepad_press(struct o2session *s, int owner, int target, int down)
+{
+    if (!s->running || owner < 0 || owner >= O2_MAX_PADS || target < 0
+        || target >= O2_TARGET_SYSACT(0))
+        return;
+    source_press(s, target, SRC_PAD(owner), down);
+}
+
+void session_gamepad_stick(struct o2session *s, int owner, int port, int act, int down)
+{
+    if (!s->running || owner < 0 || owner >= O2_MAX_PADS || port < 0 || port > 1
+        || act < 0 || act >= O2_ACT_PER_PORT)
+        return;
+    source_press(s, O2_TARGET_PORT(port, act), SRC_STICK(owner), down);
 }
 
 void o2session_set_analog(o2session *s, int joystick)
@@ -771,15 +1109,19 @@ int o2session_cart_status(o2session *s, char *dst, int dstsz)
     dst[0] = '\0';
     if (!s->running)
         return snprintf(dst, (size_t)dstsz, "stopped");
+    /* a game's own cartridge has no mailbox and no FujiNet behind it */
+    if (s->run_game)
+        return snprintf(dst, (size_t)dstsz, "game running; mailbox closed");
     o2_host_cart_status(&st);
     if (!st.powered)
         return snprintf(dst, (size_t)dstsz, "starting");
     if (st.boot_state == FN_BOOT_XFER)
-        return snprintf(dst, (size_t)dstsz, "receiving %d%%", st.boot_pct);
-    if (!st.mailbox_mode || (st.booted_game && st.mode == FN_MODE_GAME))
+        return snprintf(dst, (size_t)dstsz, "loading %d%%", st.boot_pct);
+    if (!st.mailbox)
         return snprintf(dst, (size_t)dstsz, "game running; mailbox closed");
     if (st.link_up)
-        return snprintf(dst, (size_t)dstsz, st.busy ? "connected (busy)" : "connected");
+        return snprintf(dst, (size_t)dstsz,
+                        (st.status & FN_R_STATUS_BUSY) ? "connected (busy)" : "connected");
     return snprintf(dst, (size_t)dstsz, "link down");
 }
 
@@ -788,8 +1130,58 @@ int o2session_cart_booted_game(o2session *s)
     o2_cart_status_t st;
     if (!s->running)
         return 0;
+    if (s->run_game)
+        return 1;
     o2_host_cart_status(&st);
     return st.booted_game ? 1 : 0;
+}
+
+int o2session_cart_type_name(o2session *s, char *dst, int dstsz)
+{
+    o2_cart_status_t st;
+    o2_cart_t *c;
+    o2_machine_t *m;
+    int type = O2_CART_NONE, voice = 0;
+    uint32_t size = 0;
+    char what[96];
+
+    if (!dst || dstsz <= 0)
+        return 0;
+    dst[0] = '\0';
+    if (!s->running)
+        return 0;
+
+    o2_host_cart_status(&st);
+    o2_host_lock();
+    c = o2_host_cart();
+    if (c) {
+        type = c->type;
+        size = c->rom_size;
+        if (c->type == O2_CART_VOICE && c->sub) {
+            type = c->sub->type;
+            size = c->sub->rom_size;
+            voice = 1;
+        }
+    }
+    m = o2_host_machine();
+    if (m && m->have_voice)
+        voice = 1;
+    o2_host_unlock();
+
+    if (s->run_game || (type != O2_CART_FUJINET && type != O2_CART_NONE)) {
+        if (size >= 1024)
+            snprintf(what, sizeof what, "%s, %u KB", o2_cart_type_name(type),
+                     (unsigned)((size + 1023) / 1024));
+        else
+            snprintf(what, sizeof what, "%s", o2_cart_type_name(type));
+    } else if (!st.booted_game) {
+        snprintf(what, sizeof what, "FujiNet CONFIG");
+    } else if (st.mailbox) {
+        snprintf(what, sizeof what, "FujiNet app");
+    } else {
+        snprintf(what, sizeof what, "FujiNet cartridge, game");
+    }
+    return snprintf(dst, (size_t)dstsz, "%s%s", voice ? "The Voice + " : "", what);
 }
 
 /* ---- paths ----------------------------------------------------------------- */

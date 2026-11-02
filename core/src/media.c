@@ -3,18 +3,18 @@
  *
  * Three destinations, and which one a file wants is not a matter of taste:
  *
- *   BIOS images (recognised by size and CRC, not by name -- a BIOS dump is
- *   a .bin like any cartridge) go to the ROM directory, through
- *   o2session_import_bios.
+ *   ROM images -- the console BIOS, the character sets, The Voice's speech
+ *   ROMs; recognised by size and CRC, not by name (a BIOS dump is a .bin
+ *   like any cartridge), alone or in a zip -- go to the ROM directory,
+ *   through o2session_rom_import.
  *
- *   Cartridges (.st2, .bin, .rom) go to the cartridge directory and are
- *   opened onto the FujiNet cartridge directly, whose own planner (s2map)
- *   serves them.
+ *   Cartridges (.bin, .rom, .o2) go to the cartridge directory and are
+ *   opened from there (load_cart plans every image itself).
  *
  *   Anything else goes to the FujiNet SD folder, because FujiNet is what
  *   serves it.
  *
- * Ported from the SMS sibling's media.c.
+ * Ported from the Studio II sibling's media.c.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -54,10 +54,10 @@ static int ext_is(const char *path, const char *const *exts)
     return 0;
 }
 
-/* What MAME's o2 slot takes (st2, bin, rom). The cartridge plans every
- * image itself (s2map_plan: the ST2 header, or a raw image at $0400), so the
- * extension only routes the file. */
-static const char *const cart_exts[] = { "st2", "bin", "rom", NULL };
+/* What a cartridge file is called (MAME's slot takes bin and rom; o2 is the
+ * emulators' own). The extension only routes the file: load_cart identifies
+ * every image by its contents. */
+static const char *const cart_exts[] = { "bin", "rom", "o2", NULL };
 
 static int copy_file(const char *src, const char *dst)
 {
@@ -96,13 +96,18 @@ int o2session_import_media(o2session *s, const char *src_path,
     src_path = paths_resolve(src_path, abs, sizeof abs);
     name = base_name(src_path);
 
-    if (o2session_media_is_bios(src_path)) {
-        char msg[256];
-        int idx = o2session_import_bios(s, src_path, msg, sizeof msg);
-        if (idx < 0)
+    if (o2session_media_is_rom(src_path)) {
+        char msg[512], first[O2_PATH_MAX];
+        int n = roms_import_ex(s, src_path, msg, sizeof msg, first, sizeof first);
+        if (n < 0)
             return -1;
-        snprintf(dest_out, (size_t)dest_sz, "%s/%s", s->roms_dir,
-                 idx < o2session_bios_count() ? o2session_bios_info(idx)->file : name);
+        if (n == 0) {
+            /* recognised, but nothing this version uses (another console's
+             * BIOS): there is nothing to point at, and the message says why */
+            session_set_error(s, "%s", msg);
+            return -1;
+        }
+        snprintf(dest_out, (size_t)dest_sz, "%s", first[0] ? first : s->roms_dir);
         return 0;
     }
 
@@ -139,9 +144,8 @@ int o2session_media_is_cartridge(const char *path)
 }
 
 /* Into the SD root, so CONFIG shows it at the top of the SD host with no
- * navigation. FujiNet pushes .st2, .bin and .rom files to the cartridge
- * (lib/media/rs232/diskType.cpp: MEDIATYPE_ROM), which plans whatever its
- * s2map can. */
+ * navigation. FujiNet pushes cartridge files to the cartridge, which plans
+ * whatever its o2map can. */
 int o2session_import_cart_to_sd(o2session *s, const char *src_path,
                                  char *dest_out, int dest_sz)
 {
@@ -164,7 +168,7 @@ int o2session_import_cart_to_sd(o2session *s, const char *src_path,
     }
     {
         char why[256];
-        if (!o2session_check_cart(src_path, why, sizeof why)) {
+        if (!session_cart_plan_check(src_path, why, sizeof why)) {
             session_set_error(s, "%s: %s", name, why);
             return -1;
         }

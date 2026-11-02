@@ -40,6 +40,9 @@ static char s_error[256];
 static uint8_t *s_cart_image = NULL;
 static uint32_t s_cart_size = 0;
 static bool s_cart_app = true;          /* the FujiNet cart serves the image */
+/* the ROMs the machine points at (the VDC keeps its font pointer): ours */
+static uint8_t s_bios[O2_BIOS_SIZE], s_font[512], s_font_ef[0xA00];
+static uint8_t s_voice_rom[2048], s_voice_speech[16384], s_voice_game[16384];
 static atomic_bool s_paused;
 static char s_boip[128];
 static bool s_have_boip = false;
@@ -707,13 +710,38 @@ int o2_host_start(const o2_host_opts_t *opts)
     s_cart_sync = opts->cart_sync;
 
     mo.machine = opts->machine;
-    mo.bios = opts->bios;
-    mo.font = opts->font;
-    mo.font_ef = opts->font_ef;
+    /* copied, as host.h promises: the chips keep the pointers */
+    if (opts->bios)
+    {
+        memcpy(s_bios, opts->bios, O2_BIOS_SIZE);
+        mo.bios = s_bios;
+    }
+    if (opts->font && opts->font_size == sizeof s_font)
+    {
+        memcpy(s_font, opts->font, sizeof s_font);
+        mo.font = s_font;
+    }
+    if (opts->font_ef && opts->font_ef_size == sizeof s_font_ef)
+    {
+        memcpy(s_font_ef, opts->font_ef, sizeof s_font_ef);
+        mo.font_ef = s_font_ef;
+    }
     mo.voice = opts->voice;
-    mo.voice_rom = opts->voice_rom;
-    mo.voice_speech = opts->voice_speech;
-    mo.voice_game = opts->voice_game;
+    if (opts->voice_rom && opts->voice_rom_size == sizeof s_voice_rom)
+    {
+        memcpy(s_voice_rom, opts->voice_rom, sizeof s_voice_rom);
+        mo.voice_rom = s_voice_rom;
+    }
+    if (opts->voice_speech && opts->voice_speech_size == sizeof s_voice_speech)
+    {
+        memcpy(s_voice_speech, opts->voice_speech, sizeof s_voice_speech);
+        mo.voice_speech = s_voice_speech;
+    }
+    if (opts->voice_game && opts->voice_game_size == sizeof s_voice_game)
+    {
+        memcpy(s_voice_game, opts->voice_game, sizeof s_voice_game);
+        mo.voice_game = s_voice_game;
+    }
 
     o2_machine_init(&s_machine, &mo);
 
