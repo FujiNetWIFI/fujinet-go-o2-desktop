@@ -843,6 +843,13 @@ int main(void)
         o2debug_hit hits[16];
 
         o2debug_vdc_get(d, &s);
+        /* CONFIG switches the foreground off while a band rewrites the objects,
+         * and where the machine stopped depends on how fast the host ran: step
+         * on to a moment the foreground is on, which is most of them */
+        for (int guard = 0; guard < 5000 && !s.fg_en; guard++) {
+            o2debug_step(d);
+            o2debug_vdc_get(d, &s);
+        }
         check(!s.is_pal && s.regs[0xA0] == s.control && s.sprites[0].reg_x == s.regs[1] &&
               s.sprites[1].reg_y == s.regs[4] && s.singles[0].reg_y == s.regs[0x10] &&
               s.quads[0].chars[0].index == 0 && s.quads[3].chars[3].index == 15,
