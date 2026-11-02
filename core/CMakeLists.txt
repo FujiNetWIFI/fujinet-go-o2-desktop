@@ -54,9 +54,11 @@ foreach(_f mcs48 dasm48 i8244 i8243 ef9340 sp0256 carts machine stub
   endif()
 endforeach()
 
-# The debugger drives the machine, so it joins once the machine exists.
+# The debugger drives the machine, so it joins once the machine and the
+# debugger's own O2 port (vdcview.c is its marker) exist.
 set(O2_DEBUGGER_SOURCES)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/o2/machine.c")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/o2/machine.c"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/debugger/vdcview.c")
   foreach(_f debugger.c expr.c fujitrace.c prompt.c symbols.c symbols_builtin.c vdcview.c)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/debugger/${_f}")
       list(APPEND O2_DEBUGGER_SOURCES debugger/${_f})

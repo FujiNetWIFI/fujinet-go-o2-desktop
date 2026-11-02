@@ -27,7 +27,8 @@
 /* ---- the machine and its thread ---- */
 
 static o2_machine_t s_machine;
-static o2_cart_t *s_cart = NULL;
+static o2_fujinet_t *s_fj = NULL;       /* the FujiNet cartridge (created once) */
+static o2_cart_t s_mapper;              /* a game's cartridge, when it is one */
 static pthread_t s_thread;
 static atomic_bool s_running = false;
 static atomic_bool s_stop_req = false;
@@ -38,6 +39,8 @@ static char s_error[256];
 
 static uint8_t *s_cart_image = NULL;
 static uint32_t s_cart_size = 0;
+static bool s_cart_app = true;          /* the FujiNet cart serves the image */
+static atomic_bool s_paused;
 static char s_boip[128];
 static bool s_have_boip = false;
 static bool s_cart_sync = false;
@@ -47,10 +50,11 @@ static atomic_uint_fast64_t s_frames = 0;
 static double s_frame_hz = 0.0;
 
 /* inputs, written by any thread, latched by the machine at VBLANK */
-static atomic_uint_least16_t s_keys[2];
-static atomic_bool s_clear;
-static atomic_int s_clear_pulse;        /* frames left of a clicked CLEAR */
-static atomic_bool s_needs_bios;
+static atomic_uint_fast64_t s_keys;
+static atomic_uint_least8_t s_joy[2];
+static atomic_bool s_reset;
+static atomic_int s_reset_pulse;        /* frames left of a clicked RESET */
+static atomic_uint s_missing;           /* O2_MISSING_* */
 
 /* ---- the run lock -----------------------------------------------------------
  * The machine thread holds it while it runs a frame and lets go of it between
@@ -264,60 +268,76 @@ void o2_host_audio_reset(void)
 
 /* ---- inputs ---- */
 
-void o2_host_keypad_set(int pad, uint16_t mask)
+void o2_host_keys_set(uint64_t matrix)
 {
-    if (pad < 0 || pad > 1)
+    atomic_store(&s_keys, matrix);
+}
+
+void o2_host_stick_set(int stick, uint8_t bits)
+{
+    if (stick < 0 || stick > 1)
         return;
-    atomic_store(&s_keys[pad], (uint_least16_t)(mask & O2_KEYS_MASK));
+    atomic_store(&s_joy[stick], (uint_least8_t)(bits & 0x1f));
 }
 
-void o2_host_clear_set(bool down)
+void o2_host_reset_set(bool down)
 {
-    atomic_store(&s_clear, down);
+    atomic_store(&s_reset, down);
 }
 
-void o2_host_clear_pulse(void)
+void o2_host_reset_pulse(void)
 {
-    /* long enough for the CPU to sit in RESET and the cart to see the bus
-     * fall silent, as a finger on the key would */
-    atomic_store(&s_clear_pulse, 3);
+    /* long enough for the CPU to sit in RESET, as a finger on the key would */
+    atomic_store(&s_reset_pulse, 3);
 }
 
-bool o2_host_needs_bios(void)
+unsigned o2_host_missing(void)
 {
-    return atomic_load(&s_needs_bios);
+    return atomic_load(&s_missing);
 }
 
 /* The machine thread, at the frame boundary: what the threads above set is
  * what the console's ports see from here on. */
 static void inputs_take(o2_machine_t *m)
 {
-    int pulse = atomic_load(&s_clear_pulse);
+    int pulse = atomic_load(&s_reset_pulse);
 
-    m->keys_live[O2_KEYPAD_A] = atomic_load(&s_keys[O2_KEYPAD_A]);
-    m->keys_live[O2_KEYPAD_B] = atomic_load(&s_keys[O2_KEYPAD_B]);
-    m->clear_live = atomic_load(&s_clear) || pulse > 0;
+    m->keys_live = atomic_load(&s_keys);
+    m->joy_live[0] = (uint8_t)atomic_load(&s_joy[0]);
+    m->joy_live[1] = (uint8_t)atomic_load(&s_joy[1]);
+    m->reset_live = atomic_load(&s_reset) || pulse > 0;
     if (pulse > 0)
-        atomic_store(&s_clear_pulse, pulse - 1);
+        atomic_store(&s_reset_pulse, pulse - 1);
 }
 
 void o2_host_release_all(void)
 {
-    o2_host_keypad_set(0, 0);
-    o2_host_keypad_set(1, 0);
-    o2_host_clear_set(false);
+    o2_host_keys_set(0);
+    o2_host_stick_set(0, 0);
+    o2_host_stick_set(1, 0);
+    o2_host_reset_set(false);
+}
+
+void o2_host_set_paused(bool paused)
+{
+    atomic_store(&s_paused, paused);
+}
+
+bool o2_host_is_paused(void)
+{
+    return atomic_load(&s_paused);
 }
 
 void o2_host_cart_status(o2_cart_status_t *out)
 {
     o2_host_lock();
-    o2_cart_status(atomic_load(&s_cart_up) ? s_cart : NULL, out);
+    o2_fujinet_status(atomic_load(&s_cart_up) && s_cart_app ? s_fj : NULL, out);
     o2_host_unlock();
 }
 
 o2_cart_t *o2_host_cart(void)
 {
-    return atomic_load(&s_cart_up) ? s_cart : NULL;
+    return atomic_load(&s_cart_up) ? s_machine.cart : NULL;
 }
 
 /* ---- debugger plumbing ---- */
@@ -493,15 +513,16 @@ static void *machine_thread(void *arg)
      * TCP connect to the BoIP listener is quick but not free, and a failed
      * link must not stall the UI -- the mailbox runs link-down and CONFIG
      * says so on screen. The image was checked in o2_host_start. */
-    if (o2_cart_power_on(s_cart, s_cart_image, s_cart_size,
-                              s_have_boip ? s_boip : NULL, s_cart_sync,
-                              why, sizeof why) != 0)
+    if (s_cart_app &&
+        o2_fujinet_power_on(s_fj, s_cart_image, s_cart_size,
+                            s_have_boip ? s_boip : "", s_cart_sync,
+                            why, sizeof why) != 0)
     {
         /* cannot happen after the check; fall back to CONFIG rather than
          * leaving a console with no cartridge */
         fprintf(stderr, "fujinet: %s; booting CONFIG\n", why);
-        o2_cart_power_on(s_cart, NULL, 0, s_have_boip ? s_boip : NULL,
-                              s_cart_sync, why, sizeof why);
+        o2_fujinet_power_on(s_fj, NULL, 0, s_have_boip ? s_boip : "",
+                            s_cart_sync, why, sizeof why);
     }
     atomic_store(&s_cart_up, true);
 
@@ -509,18 +530,30 @@ static void *machine_thread(void *arg)
 
     while (!atomic_load(&s_stop_req))
     {
+        if (atomic_load(&s_paused))
+        {
+            /* parked between frames, off the run lock: the audio goes quiet,
+             * the picture stays, and nothing wakes more than 50 times a second */
+            pthread_mutex_unlock(&s_run_lock);
+            while (atomic_load(&s_paused) && !atomic_load(&s_stop_req))
+            {
+                struct timespec nap = { 0, 20 * 1000000L };
+                nanosleep(&nap, NULL);
+            }
+            run_lock_take();
+            clock_gettime(CLOCK_MONOTONIC, &next);
+            continue;
+        }
         clock_gettime(CLOCK_MONOTONIC, &frame_start);
 
         o2_machine_run_frame(&s_machine);
-        o2_cart_frame(s_cart);
         frame_publish(s_machine.fb);
         audio_publish(s_machine.out, s_machine.out_frames);
         s_machine.out_frames = 0;
-        atomic_store(&s_needs_bios, s_machine.stub_parked);
+        atomic_store(&s_missing, o2_machine_missing(&s_machine));
         atomic_fetch_add(&s_frames, 1);
         /* MAME's input ports update at the frame boundary */
         inputs_take(&s_machine);
-        o2_machine_latch_inputs(&s_machine);
 
         /* between frames the machine is anyone's who asks */
         pthread_mutex_unlock(&s_run_lock);
@@ -594,6 +627,8 @@ bool o2_host_is_running(void)
 int o2_host_start(const o2_host_opts_t *opts)
 {
     char why[160];
+    o2_machine_opts_t mo;
+    const char *err = NULL;
 
     if (atomic_load(&s_running))
     {
@@ -606,22 +641,23 @@ int o2_host_start(const o2_host_opts_t *opts)
         snprintf(s_error, sizeof s_error, "no options");
         return -1;
     }
-
-    if (opts->cart && opts->cart_size &&
-        !o2_cart_check_image(opts->cart, opts->cart_size, NULL, why, sizeof why))
+    if (opts->machine < 0 || opts->machine >= O2_MACHINE_COUNT)
     {
-        snprintf(s_error, sizeof s_error, "%s", why);
+        snprintf(s_error, sizeof s_error, "unknown machine");
+        return -1;
+    }
+    if (opts->bios && opts->bios_size != O2_BIOS_SIZE)
+    {
+        snprintf(s_error, sizeof s_error, "the BIOS must be %u bytes", (unsigned)O2_BIOS_SIZE);
         return -1;
     }
 
-    if (!s_cart)
+    s_cart_app = opts->cart == NULL || opts->cart_app;
+    if (s_cart_app && opts->cart && opts->cart_size &&
+        !o2_fujinet_check_image(opts->cart, opts->cart_size, NULL, why, sizeof why))
     {
-        s_cart = o2_cart_create();
-        if (!s_cart)
-        {
-            snprintf(s_error, sizeof s_error, "cannot create the FujiNet cartridge");
-            return -1;
-        }
+        snprintf(s_error, sizeof s_error, "%s", why);
+        return -1;
     }
 
     free(s_cart_image);
@@ -638,18 +674,56 @@ int o2_host_start(const o2_host_opts_t *opts)
         memcpy(s_cart_image, opts->cart, opts->cart_size);
         s_cart_size = opts->cart_size;
     }
+
+    /* what is in the slot: the FujiNet cartridge (CONFIG or an app), or a
+     * game's own cartridge, as a real console would have it */
+    memset(&mo, 0, sizeof mo);
+    if (s_cart_app)
+    {
+        if (!s_fj)
+        {
+            s_fj = o2_fujinet_create();
+            if (!s_fj)
+            {
+                snprintf(s_error, sizeof s_error, "cannot create the FujiNet cartridge");
+                return -1;
+            }
+        }
+        mo.cart = o2_fujinet_cart(s_fj);
+        mo.fujinet = s_fj;
+    }
+    else
+    {
+        if (o2_cart_init(&s_mapper, opts->cart_type, s_cart_image, s_cart_size, &err) != 0)
+        {
+            snprintf(s_error, sizeof s_error, "%s", err ? err : "the cartridge cannot be mapped");
+            return -1;
+        }
+        mo.cart = &s_mapper;
+    }
     s_have_boip = opts->boip_hostport != NULL;
     if (s_have_boip)
         snprintf(s_boip, sizeof s_boip, "%s", opts->boip_hostport);
     s_cart_sync = opts->cart_sync;
 
-    /* the exact frame period from the exact clock */
-    s_frame_hz = O2_FRAME_HZ;
-    s_frame_ns = (long)(1e9 / O2_FRAME_HZ + 0.5);
+    mo.machine = opts->machine;
+    mo.bios = opts->bios;
+    mo.font = opts->font;
+    mo.font_ef = opts->font_ef;
+    mo.voice = opts->voice;
+    mo.voice_rom = opts->voice_rom;
+    mo.voice_speech = opts->voice_speech;
+    mo.voice_game = opts->voice_game;
 
-    o2_machine_init(&s_machine, opts->bios, opts->bios_size, s_cart, opts->mame_power_on);
-    atomic_store(&s_clear_pulse, 0);
-    atomic_store(&s_needs_bios, false);
+    o2_machine_init(&s_machine, &mo);
+
+    /* the exact frame period from the exact clocks */
+    s_frame_hz = s_machine.pixel_hz / (double)s_machine.vdc.frame_clocks;
+    s_frame_ns = (long)(1e9 / s_frame_hz + 0.5);
+
+    atomic_store(&s_reset_pulse, 0);
+    atomic_store(&s_missing, 0u);
+    atomic_store(&s_paused, false);
     inputs_take(&s_machine);
     o2_machine_latch_inputs(&s_machine);
     o2_host_audio_reset();
@@ -680,7 +754,7 @@ void o2_host_stop(void)
     pthread_join(s_thread, NULL);
     atomic_store(&s_running, false);
     atomic_store(&s_cart_up, false);
-    o2_cart_power_off(s_cart);
+    o2_fujinet_power_off(s_fj);
     free(s_cart_image);
     s_cart_image = NULL;
     s_cart_size = 0;

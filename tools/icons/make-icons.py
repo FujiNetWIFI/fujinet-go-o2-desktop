@@ -7,18 +7,18 @@ to the siblings' copies -- composited over this product's own background
 colour, so the whole family reads as one product line while each target
 still gets a distinct badge colour.
 
-Two things are specific to this target, both the user's choice (2026-10-20):
+Two things are specific to this target, both the user's choice (2026-11-01):
 
-  * Background is #C11218, the Magnavox Odyssey 2's case tan, sampled from the
-    console photo in fujinet-ads/o2/rca-studio-ii.png -- the same
-    colour the frontends use for UI highlights (O2SESSION_ACCENT_RGB in
-    core/include/o2session.h). It sits close to the Atari 800 app's
-    beige (#C8BDA4) but more yellow, as the console is.
+  * Background is #C3C0BF, the Magnavox Odyssey 2's case silver, sampled from
+    the console photo in fujinet-ads/o2/magnavox-odyssey-2-console.png. The
+    UI accent is NOT the icon colour: it is the console's power-button red,
+    #C11218 (O2SESSION_ACCENT_RGB in core/include/o2session.h), which keeps
+    the dock and the family banner distinct from the Master System's red.
   * The mark is INVERTED before compositing, as on the 2600's and 7800's
     icons: the family art is white discs and lines around one black centre
     disc, which would wash out on a light ground, so the RGB channels are
     inverted (alpha untouched) -- the mark comes out in the black of the
-    console's keys, the centre disc white.
+    console's keys and controllers, the centre disc white.
 
 Everything else about the composite (rounded-square mask, corner radius,
 foreground zoom, output sizes) matches the sibling repos' own
@@ -42,7 +42,7 @@ OUTDIR = ROOT / "data/icons/hicolor"
 ICNS_OUT = ROOT / "data/icons/fujinet-go-o2.icns"
 ICO_OUT = ROOT / "frontends/windows/app.ico"
 
-BACKGROUND = (0xC8, 0xB5, 0x8C, 0xFF)    # #C11218, the Odyssey 2's case tan
+BACKGROUND = (0xC3, 0xC0, 0xBF, 0xFF)    # #C3C0BF, the Odyssey 2's case silver
 INVERT_FOREGROUND = True                 # black mark, white centre (see above)
 MASTER = 1024                            # render big, downsample with LANCZOS
 CORNER_RADIUS = 0.22                     # fraction of the edge
