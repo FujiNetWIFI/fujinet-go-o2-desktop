@@ -1,0 +1,147 @@
+; stub.a48 -- the no-BIOS stand-in for the Magnavox Odyssey 2 / Philips Videopac
+; system ROM ($000-$3FF), written for this app from the HARDWARE and from the
+; two contracts the FujiNet apps rely on. It contains no part of the Magnavox
+; or Philips firmware (see COMPLIANCE.md).
+;
+; It is served at $000 when no BIOS is imported (or "Use the imported BIOS" is
+; off), which is enough to boot CONFIG and every FujiNet app: they draw with
+; their own display engine and need from the BIOS only
+;
+;   * the reset and interrupt vectors, which hand straight to the cartridge:
+;       $000 reset              -> jmp $400
+;       $003 external interrupt -> jmp $402   (the 8244's vertical blank)
+;       $007 timer interrupt    -> jmp $404   (the line counter)
+;   * readkey    at $0B0  (a new key 0-47 in A; $C0+key while it stays held;
+;                          $FF none; the last key is kept in bank 0's R7;
+;                          works in bank 0, returns in register bank 1 --
+;                          the cartridge's interrupts use bank 1; interrupts
+;                          back on)
+;   * getjoystick at $38F (R1 = stick 0/1; R3 up/down = $FF/$01; R2 left/right
+;                          = $FF/$01; F0 = the button)
+;
+; The keyboard and the sticks can only be read from here: P20-P23 double as
+; the cartridge address lines A8-A11 on every external fetch, so code running
+; from the cartridge cannot hold the keyboard decoder's row select.
+;
+; Hardware used (MAME's odyssey2.cpp, the Odyssey 2 service manual):
+;   P12 low  enables the 74156 row decoder / 74148 encoder and the stick buffer
+;   P20-P22  select the keyboard row 0-5 (or the stick, 0/1)
+;   P24      reads 0 when a key in the selected row is down
+;   P25-P27  the highest-numbered pressed column, inverted: col = 7 - P25..27
+;   BUS      reads the selected stick, active low: 0 UP, 1 RIGHT, 2 DOWN,
+;            3 LEFT, 4 BUTTON
+;
+; Build: tools/stub/build-stub.sh (asl + p2bin, then core/o2/stub.c).
+
+        cpu     8048
+
+        org     000h
+        jmp     400h            ; reset: the cartridge
+        org     003h
+        jmp     402h            ; external interrupt: the cartridge's vblank
+        org     007h
+        jmp     404h            ; timer interrupt: the cartridge's line counter
+
+; ---- readkey ----------------------------------------------------------------
+; Works in register bank 0 (R7 = the last key, as the callers keep it); bank 1
+; belongs to the cartridge's band interrupts, which keep running while the
+; matrix is read (only the vblank is held off). Comes back in bank 1.
+        org     0B0h
+readkey:
+        dis     i               ; vblank off while the matrix is read
+        sel     rb0
+        in      a,p1
+        mov     r6,a            ; r6 = the caller's P1
+        anl     a,#0FBh         ; P12 low: the keyboard decoder on
+        outl    p1,a
+        mov     r2,#0FFh        ; r2 = the key found ($FF none)
+        mov     r3,#0           ; r3 = the row
+rk_row: mov     a,r3
+        orl     a,#0F0h         ; P24-P27 stay inputs; P20-P22 pick the row
+        outl    p2,a
+        nop
+        in      a,p2
+        jb4     rk_next         ; P24 high: nothing down in this row
+        swap    a               ; the column code, P25-P27 -> bits 0-2
+        rr      a
+        cpl     a               ; col = 7 - code
+        anl     a,#07h
+        mov     r4,a
+        mov     a,r3
+        rl      a               ; key = row * 8 + col
+        rl      a
+        rl      a
+        add     a,r4
+        mov     r2,a
+        jmp     rk_done
+rk_next:
+        inc     r3
+        mov     a,r3
+        xrl     a,#6            ; rows 0-5 on the Odyssey 2
+        jnz     rk_row
+rk_done:
+        mov     a,r2
+        cpl     a
+        jz      rk_none         ; $FF: no key
+        mov     a,r2
+        xrl     a,r7
+        jz      rk_held         ; the key already reported
+        mov     a,r2            ; a new key: remember it
+        mov     r7,a
+        jmp     rk_out
+rk_held:
+        mov     a,r2
+        orl     a,#0C0h         ; $C0 + key while held
+        jmp     rk_out
+rk_none:
+        mov     a,#0FFh
+        mov     r7,a            ; nothing is down now
+rk_out:
+        mov     r5,a            ; the result
+        mov     a,r6
+        outl    p1,a            ; give the caller its P1 back
+        mov     a,r5
+        sel     rb1
+        en      i
+        ret
+
+; ---- getjoystick ------------------------------------------------------------
+        org     38Fh
+getjoystick:
+        mov     a,r1            ; the stick, 0 or 1 (the caller selected it with P1:
+        orl     a,#0F0h         ; P12 low, the stick buffer on)
+        outl    p2,a
+        nop
+        ins     a,bus
+        cpl     a               ; 1 = pressed
+        mov     r4,a
+        clr     f0
+        jb4     gj_fire
+        jmp     gj_dirs
+gj_fire:
+        cpl     f0              ; the button
+gj_dirs:
+        mov     r3,#0
+        mov     r2,#0
+        mov     a,r4
+        jb0     gj_up
+        jb2     gj_down
+        jmp     gj_horiz
+gj_up:  mov     r3,#0FFh
+        jmp     gj_horiz
+gj_down:
+        mov     r3,#01h
+gj_horiz:
+        mov     a,r4
+        jb3     gj_left
+        jb1     gj_right
+        ret
+gj_left:
+        mov     r2,#0FFh
+        ret
+gj_right:
+        mov     r2,#01h
+        ret
+
+        org     3FFh
+        db      0               ; pad to the 1K image
