@@ -124,7 +124,7 @@ static int find_line(const o2debug_line *l, int n, const char *prefix)
 /* ---- a stand-in FujiNet on loopback (POSIX) ----------------------------------- */
 
 #ifndef _WIN32
-typedef struct { int listen_fd, fd, frames; } fake_fujinet;
+typedef struct { int listen_fd, fd, frames, port; } fake_fujinet;
 
 /* A SLIP-framed FujiBus ACK from the FUJI device with one payload byte. */
 static size_t ack_frame(uint8_t *out)
@@ -419,7 +419,8 @@ int main(void)
             listen(fake.listen_fd, 1) == 0 &&
             getsockname(fake.listen_fd, (struct sockaddr *)&a, &al) == 0 &&
             pthread_create(&fake_th, NULL, fake_main, &fake) == 0) {
-            snprintf(boip, sizeof boip, "127.0.0.1:%d", ntohs(a.sin_port));
+            fake.port = ntohs(a.sin_port);
+            snprintf(boip, sizeof boip, "127.0.0.1:%d", fake.port);
             fake_up = 1;
         }
     }
@@ -854,6 +855,16 @@ int main(void)
             if (s.singles[i].visible) { vis = 0; hit_kind = 1; hit_index = i;
                 bx = s.singles[i].x; by = s.singles[i].y; bw = s.singles[i].width; bh = s.singles[i].height; }
         check(vis == 0, "CONFIG's screen has a visible object");
+        {
+            int geom = 1;
+            for (i = 0; i < 12; i++)
+                if (s.singles[i].x != (s.singles[i].reg_x + 5) * 2 || s.singles[i].y != s.singles[i].reg_y) geom = 0;
+            for (i = 0; i < 4; i++)
+                for (int j = 0; j < 4; j++)
+                    if (s.quads[i].chars[j].x != s.quads[i].x + 32 * j || s.quads[i].chars[j].y != s.quads[i].y ||
+                        s.quads[i].chars[j].rows != s.quads[i].rows) geom = 0;
+            check(geom, "singles sit at (X+5)*2, Y; a quad's four characters share its row, 32 pixels apart");
+        }
         o2debug_vdc_describe(d, 0xA0, name, sizeof name, text, sizeof text);
         check(name[0] != '\0', "register names");
         o2debug_vdc_describe(d, 0xA1, name, sizeof name, text, sizeof text);
@@ -1349,10 +1360,20 @@ int main(void)
     o2debug_free(d);
 #ifndef _WIN32
     if (fake_up) {
-        shutdown(fake.listen_fd, SHUT_RDWR);
-        close(fake.listen_fd);
-        if (fake.fd > 0) shutdown(fake.fd, SHUT_RDWR);
+        if (fake.fd <= 0) {         /* never dialled: let its accept() go */
+            struct sockaddr_in a;
+            int s = socket(AF_INET, SOCK_STREAM, 0);
+            memset(&a, 0, sizeof a);
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            a.sin_port = htons((unsigned short)fake.port);
+            if (s >= 0) {
+                if (connect(s, (struct sockaddr *)&a, sizeof a) == 0) close(s);
+                else close(s);
+            }
+        }
         pthread_join(fake_th, NULL);
+        close(fake.listen_fd);
     }
 #endif
     printf("%d failure(s)\n", failures);

@@ -1550,10 +1550,12 @@ int o2debug_cart_info(o2debug *d, char *dst, int dstsz)
     if (c.type == O2_CART_FUJINET)
     {
         const char *what = !c.booted_game ? "CONFIG" : c.mailbox ? "app (mailbox live)" : "game image";
-        n = snprintf(dst, (size_t)dstsz, "FujiNet cartridge: %s, link %s", what,
-                     c.link_off ? "off" : c.link_up ? "up" : "down");
+        const char *link = c.link_off ? "off" : c.link_up ? "up" : "down";
         if (c.live_size)
-            n += snprintf(dst + n, n < dstsz ? (size_t)(dstsz - n) : 0, ", %u bytes", c.live_size);
+            n = snprintf(dst, (size_t)dstsz, "FujiNet cartridge: %s, link %s, %u bytes", what, link,
+                         c.live_size);
+        else
+            n = snprintf(dst, (size_t)dstsz, "FujiNet cartridge: %s, link %s", what, link);
         return n < dstsz ? n : dstsz - 1;
     }
     n = snprintf(dst, (size_t)dstsz, "%s cartridge, %u bytes%s", c.type_name, c.rom_size,
@@ -1822,10 +1824,10 @@ void o2debug_trace_clear(o2debug *d)
 
 /* ---- files ------------------------------------------------------------------------ */
 
-static int fail_msg(char *msg, int msgsz, const char *fmt, const char *arg)
+static int fail_msg(char *msg, int msgsz, const char *text, const char *arg, const char *tail)
 {
     if (msg && msgsz > 0)
-        snprintf(msg, (size_t)msgsz, fmt, arg ? arg : "");
+        snprintf(msg, (size_t)msgsz, "%s%s%s", text, arg ? arg : "", tail ? tail : "");
     return -1;
 }
 
@@ -1836,7 +1838,7 @@ static int write_bytes(const char *path, const uint8_t *data, size_t n, char *ms
     {
         if (f)
             fclose(f);
-        return fail_msg(msg, msgsz, "Cannot write %s", path);
+        return fail_msg(msg, msgsz, "Cannot write ", path, NULL);
     }
     fclose(f);
     if (msg && msgsz > 0)
@@ -1848,7 +1850,7 @@ static int save_locked(o2debug *d, o2_machine_t *m, const char *kind, const char
                        char *msg, int msgsz)
 {
     if (!d || !m || !kind || !path)
-        return fail_msg(msg, msgsz, "The machine is not running.%s", "");
+        return fail_msg(msg, msgsz, "The machine is not running.", NULL, NULL);
     if (!strcmp(kind, "ram"))
     {
         uint8_t buf[64 + O2_RAM_SIZE];
@@ -1867,14 +1869,14 @@ static int save_locked(o2debug *d, o2_machine_t *m, const char *kind, const char
     if (!strcmp(kind, "font"))
     {
         if (!m->vdc.font)
-            return fail_msg(msg, msgsz, "No character set is imported (the glyphs are blank).%s", "");
+            return fail_msg(msg, msgsz, "No character set is imported (the glyphs are blank).", NULL, NULL);
         return write_bytes(path, m->vdc.font, 512, msg, msgsz);
     }
     if (!strcmp(kind, "screen"))
     {
         FILE *f = fopen(path, "wb");
         if (!f)
-            return fail_msg(msg, msgsz, "Cannot write %s", path);
+            return fail_msg(msg, msgsz, "Cannot write ", path, NULL);
         fprintf(f, "P6\n%d %d\n255\n", O2_FB_WIDTH, O2_FB_HEIGHT);
         for (int i = 0; i < O2_FB_WIDTH * O2_FB_HEIGHT; i++)
         {
@@ -1890,7 +1892,7 @@ static int save_locked(o2debug *d, o2_machine_t *m, const char *kind, const char
     {
         FILE *f = fopen(path, "w");
         if (!f)
-            return fail_msg(msg, msgsz, "Cannot write %s", path);
+            return fail_msg(msg, msgsz, "Cannot write ", path, NULL);
         if (!strcmp(kind, "dis"))
         {
             const uint16_t pc = cur_pc(m);
@@ -1946,7 +1948,7 @@ static int save_locked(o2debug *d, o2_machine_t *m, const char *kind, const char
             snprintf(msg, (size_t)msgsz, "Saved %s", path);
         return 0;
     }
-    return fail_msg(msg, msgsz, "Unknown save kind %s (dis, ram, mailbox, vdc, font, screen, regs)", kind);
+    return fail_msg(msg, msgsz, "Unknown save kind ", kind, " (dis, ram, mailbox, vdc, font, screen, regs)");
 }
 
 int o2debug_save(o2debug *d, const char *kind, const char *path, char *msg, int msgsz)
