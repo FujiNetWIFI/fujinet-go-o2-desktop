@@ -6,6 +6,7 @@
  *               [-cart F]      an app/CONFIG image on the FujiNet cartridge
  *               [-game F]      a game: its own mapper cartridge, no FujiNet
  *               [-boip HOST:PORT]  dial a FujiNet (default: none, link down)
+               [-voice ROM2K -voice-speech ROM16K [-voice-game ROM16K]]
                [-frames N] [-hash] [-ppm N FILE] [-raw FILE] [-vdclog FILE]
                [-wav FILE] [-gain G]
  *               [-key FRAME:ROW:COL:DOWN] [-joy FRAME:STICK:BITS]
@@ -98,7 +99,9 @@ int main(int argc, char **argv)
     o2_cart_t mapper;
     o2_machine_opts_t mo;
     uint8_t *bios = NULL, *font = NULL, *font_ef = NULL, *cart = NULL, *game = NULL;
+    uint8_t *vrom = NULL, *vspeech = NULL, *vgame = NULL;
     uint32_t bios_n = 0, font_n = 0, font_ef_n = 0, cart_n = 0, game_n = 0;
+    uint32_t vrom_n = 0, vspeech_n = 0, vgame_n = 0;
     const char *ppm_path = NULL, *wav_path = NULL, *boip = "", *raw_path = NULL, *vdclog_path = NULL;
     FILE *raw = NULL;
     int ppm_frame = -1, frames = 60, hash = 0, machine = O2_MACHINE_ODYSSEY2;
@@ -122,6 +125,9 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "-bios") && i + 1 < argc) bios = slurp(argv[++i], &bios_n);
         else if (!strcmp(a, "-font") && i + 1 < argc) font = slurp(argv[++i], &font_n);
         else if (!strcmp(a, "-font-ef") && i + 1 < argc) font_ef = slurp(argv[++i], &font_ef_n);
+        else if (!strcmp(a, "-voice") && i + 1 < argc) vrom = slurp(argv[++i], &vrom_n);
+        else if (!strcmp(a, "-voice-speech") && i + 1 < argc) vspeech = slurp(argv[++i], &vspeech_n);
+        else if (!strcmp(a, "-voice-game") && i + 1 < argc) vgame = slurp(argv[++i], &vgame_n);
         else if (!strcmp(a, "-cart") && i + 1 < argc) cart = slurp(argv[++i], &cart_n);
         else if (!strcmp(a, "-game") && i + 1 < argc) game = slurp(argv[++i], &game_n);
         else if (!strcmp(a, "-frames") && i + 1 < argc) frames = atoi(argv[++i]);
@@ -153,6 +159,12 @@ int main(int argc, char **argv)
     mo.bios = bios && bios_n == O2_BIOS_SIZE ? bios : NULL;
     mo.font = font && font_n == 512 ? font : NULL;
     mo.font_ef = font_ef;
+    if (vrom && vspeech && vrom_n == 2048 && vspeech_n == 16384) {
+        mo.voice = true;
+        mo.voice_rom = vrom;
+        mo.voice_speech = vspeech;
+        mo.voice_game = vgame && vgame_n == 16384 ? vgame : NULL;
+    }
 
     fj = o2_fujinet_create();
     if (game) {

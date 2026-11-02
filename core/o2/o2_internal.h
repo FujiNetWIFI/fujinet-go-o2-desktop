@@ -93,10 +93,12 @@ struct o2_machine {
     uint64_t insn_start;                  /* the clock the running instruction started at */
 
     /* The Voice, in front of the cartridge (voice.c) */
+    bool voice_wanted;                    /* the Voice was asked for (its ROMs may be missing) */
     bool have_voice;
     sp0256_t speech;
-    o2_cart_t *voice_cart;
-    uint64_t speech_t;                    /* pixel clocks the chip has run to */
+    o2_cart_t voice_wrap;                 /* what is in the slot then; voice_sub is behind it */
+    o2_cart_t *voice_sub;
+    uint8_t voice_control;                /* P1 & $13 as the Voice's slot saw it */
 
     /* memory */
     uint8_t rom[O2_BIOS_SIZE];            /* the BIOS, or the stand-in */

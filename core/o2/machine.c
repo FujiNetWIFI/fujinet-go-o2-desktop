@@ -187,6 +187,83 @@ static int test_read(void *user, int n)
     return i8244_t1(&m->vdc, now_of(m));
 }
 
+/* ---- The Voice (bus/odyssey2/voice.cpp) -----------------------------------
+ * A cartridge in the slot with the game's behind it: the program space, P1's
+ * bank bits and the bus go through; P2's A10 (bit 2) is held low; the data
+ * space writes drive the SP0256 and the cart's T0 is its !LRQ. As in MAME the
+ * sub-cartridge sees no I/O. The chip runs on its own 3.12 MHz crystal, kept
+ * in step with the console's clock at every access and at each frame's end. */
+
+#define SP0256_HZ 3120000.0
+
+static inline uint64_t speech_clock(const o2_machine_t *m)
+{
+    return (uint64_t)((double)m->cpu.cycles * SP0256_HZ / m->cycle_hz);
+}
+
+static uint8_t voice_read(o2_cart_t *c, uint16_t addr, int peek)
+{
+    o2_machine_t *m = c->priv;
+
+    return o2_cart_read(m->voice_sub, addr, peek);
+}
+
+static uint8_t voice_io_read(o2_cart_t *c, uint8_t off, int peek)
+{
+    (void)c; (void)off; (void)peek;
+    return 0xff;
+}
+
+static void voice_io_write(o2_cart_t *c, uint8_t off, uint8_t data)
+{
+    o2_machine_t *m = c->priv;
+
+    sp0256_sync_to(&m->speech, speech_clock(m));
+    sp0256_o2_io_write(&m->speech, m->voice_control, off, data);
+}
+
+static void voice_write_p1(o2_cart_t *c, uint8_t data)
+{
+    o2_machine_t *m = c->priv;
+
+    m->voice_control = data;
+    o2_cart_write_p1(m->voice_sub, data & 3);
+}
+
+static void voice_write_p2(o2_cart_t *c, uint8_t data)
+{
+    o2_machine_t *m = c->priv;
+
+    o2_cart_write_p2(m->voice_sub, data & (uint8_t)~4);
+}
+
+static uint8_t voice_bus_read(o2_cart_t *c)
+{
+    o2_machine_t *m = c->priv;
+
+    return o2_cart_bus_read(m->voice_sub);
+}
+
+static void voice_bus_write(o2_cart_t *c, uint8_t data)
+{
+    o2_machine_t *m = c->priv;
+
+    o2_cart_bus_write(m->voice_sub, data);
+}
+
+static int voice_t0(o2_cart_t *c)
+{
+    o2_machine_t *m = c->priv;
+
+    sp0256_sync_to(&m->speech, speech_clock(m));
+    return sp0256_o2_t0(&m->speech);
+}
+
+static const o2_cart_ops_t voice_ops = {
+    voice_read, voice_io_read, voice_io_write, voice_write_p1, voice_write_p2,
+    voice_bus_read, voice_bus_write, voice_t0,
+};
+
 /* PROG: the 8243 expander's strobe (G7400) */
 static void prog_write(void *user, int level)
 {
@@ -253,6 +330,22 @@ void o2_machine_init(o2_machine_t *m, const o2_machine_opts_t *opts)
 
     m->cart = opts->cart;
     m->fujinet = opts->fujinet;
+    m->voice_wanted = opts->voice;
+    if (opts->voice && opts->voice_rom && opts->voice_speech) {
+        /* sp0256_load() takes the 16 KB speech ROM at $4000 and a game's own
+         * at $8000 (MAME's "speech" region as voice.cpp loads it) */
+        sp0256_init(&m->speech, opts->voice_rom, NULL, 0);
+        sp0256_load(&m->speech, 0x4000, opts->voice_speech, 16384);
+        if (opts->voice_game)
+            sp0256_load(&m->speech, 0x8000, opts->voice_game, 16384);
+        m->have_voice = true;
+        m->voice_sub = opts->cart;
+        memset(&m->voice_wrap, 0, sizeof m->voice_wrap);
+        m->voice_wrap.ops = &voice_ops;
+        m->voice_wrap.type = O2_CART_VOICE;
+        m->voice_wrap.priv = m;
+        m->cart = &m->voice_wrap;
+    }
     m->p1 = m->p2 = 0xff;
 
     i8244_init(&m->vdc, m->is_pal, opts->font);
@@ -308,6 +401,8 @@ unsigned o2_machine_missing(const o2_machine_t *m)
         miss |= O2_MISSING_BIOS;
     if (!m->vdc.font || (m->have_ef && !m->ef.font))
         miss |= O2_MISSING_FONT;
+    if (m->voice_wanted && !m->have_voice)
+        miss |= O2_MISSING_VOICE;
     return miss;
 }
 
@@ -377,11 +472,23 @@ static void mix_audio(o2_machine_t *m, uint64_t t)
         n = O2_AUDIO_MAX;
     i8244_run_until(&m->vdc, t);
     i8244_sound_mix(&m->vdc, m->audio_t, t, mono, n);
-    for (i = 0; i < n; i++) {
-        float s = mono[i] * m->audio_gain;
+    for (i = 0; i < n; i++)
+        mono[i] *= m->audio_gain;
+    if (m->have_voice) {
+        float speech[O2_AUDIO_MAX];
 
-        m->out[2 * i] = s;
-        m->out[2 * i + 1] = s;
+        /* the chip's own clock, brought up to the frame's end; MAME routes it at 1.0 */
+        sp0256_sync_to(&m->speech, speech_clock(m));
+        sp0256_render_f32(&m->speech, speech, n);
+        for (i = 0; i < n; i++) {
+            float s = mono[i] + speech[i];
+
+            mono[i] = s > 1.0f ? 1.0f : s < -1.0f ? -1.0f : s;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        m->out[2 * i] = mono[i];
+        m->out[2 * i + 1] = mono[i];
     }
     m->out_frames = n;
     m->audio_samples += (uint64_t)n;
