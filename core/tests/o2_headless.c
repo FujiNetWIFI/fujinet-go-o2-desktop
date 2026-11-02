@@ -6,11 +6,14 @@
  *               [-cart F]      an app/CONFIG image on the FujiNet cartridge
  *               [-game F]      a game: its own mapper cartridge, no FujiNet
  *               [-boip HOST:PORT]  dial a FujiNet (default: none, link down)
-               [-frames N] [-hash] [-ppm N FILE] [-wav FILE] [-gain G]
+               [-frames N] [-hash] [-ppm N FILE] [-raw FILE] [-vdclog FILE]
+               [-wav FILE] [-gain G]
  *               [-key FRAME:ROW:COL:DOWN] [-joy FRAME:STICK:BITS]
  *
  * -hash prints "frame fnv64" for every frame (the A/B compares these with a
- * MAME run's); -ppm writes frame N as a PPM; -wav records the sound as mono
+ * MAME run's); -ppm writes frame N as a PPM; -raw writes every frame as
+ * 360x243 32-bit little-endian ARGB, in order (tools/ab/cart_ab.py compares it
+ * with the same dump from MAME); -wav records the sound as mono
  * 16-bit at 48 kHz. With no -bios the stand-in runs. With no -cart/-game
  * CONFIG, the baked image, boots; its link is down (nothing is dialled).
  *
@@ -74,6 +77,17 @@ static void write_ppm(const char *path, const uint32_t *px)
     fclose(f);
 }
 
+/* -vdclog: every external-space access with its time in pixel clocks, in the
+ * format of tools/ab/vdc_log.lua, to diff against MAME's. */
+static FILE *s_vdclog;
+
+static void log_access(o2_machine_t *m, void *user, int kind, uint16_t addr, uint8_t data)
+{
+    (void)user;
+    fprintf(s_vdclog, "%c %llu %u %u %u\n", kind == O2_BUS_XW ? 'W' : 'R',
+            (unsigned long long)o2_machine_now(m), (unsigned)addr, (unsigned)data, (unsigned)m->p1);
+}
+
 typedef struct { int frame, row, col, down; } key_ev;
 typedef struct { int frame, stick, bits; } joy_ev;
 
@@ -85,7 +99,8 @@ int main(int argc, char **argv)
     o2_machine_opts_t mo;
     uint8_t *bios = NULL, *font = NULL, *font_ef = NULL, *cart = NULL, *game = NULL;
     uint32_t bios_n = 0, font_n = 0, font_ef_n = 0, cart_n = 0, game_n = 0;
-    const char *ppm_path = NULL, *wav_path = NULL, *boip = "";
+    const char *ppm_path = NULL, *wav_path = NULL, *boip = "", *raw_path = NULL, *vdclog_path = NULL;
+    FILE *raw = NULL;
     int ppm_frame = -1, frames = 60, hash = 0, machine = O2_MACHINE_ODYSSEY2;
     float gain = 1.0f;
     key_ev keys[256];
@@ -117,6 +132,8 @@ int main(int argc, char **argv)
             ppm_frame = atoi(argv[++i]);
             ppm_path = argv[++i];
         } else if (!strcmp(a, "-wav") && i + 1 < argc) wav_path = argv[++i];
+        else if (!strcmp(a, "-raw") && i + 1 < argc) raw_path = argv[++i];
+        else if (!strcmp(a, "-vdclog") && i + 1 < argc) vdclog_path = argv[++i];
         else if (!strcmp(a, "-key") && i + 1 < argc && nkeys < 256) {
             key_ev k;
             if (sscanf(argv[++i], "%d:%d:%d:%d", &k.frame, &k.row, &k.col, &k.down) == 4)
@@ -155,6 +172,13 @@ int main(int argc, char **argv)
     o2_machine_init(&m, &mo);
     m.audio_gain = gain;
 
+    if (raw_path)
+        raw = fopen(raw_path, "wb");
+    if (vdclog_path) {
+        s_vdclog = fopen(vdclog_path, "w");
+        m.bus_hook = log_access;
+        m.watch = O2_WATCH_XR | O2_WATCH_XW;
+    }
     if (wav_path) {
         uint8_t hdr[44] = { 0 };
         wav = fopen(wav_path, "wb");
@@ -176,8 +200,18 @@ int main(int argc, char **argv)
             if (joys[k].frame == f)
                 m.joy_live[joys[k].stick & 1] = (uint8_t)joys[k].bits;
         o2_machine_run_frame(&m);
+        if (s_vdclog)
+            fprintf(s_vdclog, "F %d %llu %u\n", f, (unsigned long long)o2_machine_now(&m), (unsigned)m.p1);
         if (hash)
             printf("%d %016llx\n", f, (unsigned long long)fnv64(m.fb, O2_FB_WIDTH * O2_FB_HEIGHT));
+        if (raw) {
+            static uint32_t argb[O2_FB_WIDTH * O2_FB_HEIGHT];
+            int px;
+
+            for (px = 0; px < O2_FB_WIDTH * O2_FB_HEIGHT; px++)
+                argb[px] = 0xff000000u | (m.fb[px] & 0xffffffu);
+            fwrite(argb, sizeof argb[0], O2_FB_WIDTH * O2_FB_HEIGHT, raw);
+        }
         if (f == ppm_frame && ppm_path)
             write_ppm(ppm_path, m.fb);
         if (wav) {
@@ -192,6 +226,10 @@ int main(int argc, char **argv)
             wav_bytes += (uint32_t)m.out_frames * 2u;
         }
     }
+    if (raw)
+        fclose(raw);
+    if (s_vdclog)
+        fclose(s_vdclog);
     if (wav) {
         uint8_t h[44];
         uint32_t rate = O2_AUDIO_RATE, byterate = O2_AUDIO_RATE * 2u, riff = 36 + wav_bytes;
