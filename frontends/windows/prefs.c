@@ -69,6 +69,7 @@ static int g_dirty;
 static int g_page;
 static int g_nroms;
 static unsigned g_pad_seen;
+static int g_machine_at_open;
 
 static int S(int v) { return o2_scale(v, g_dpi); }
 
@@ -477,6 +478,19 @@ static int commit_address(int interactive)
     return 1;
 }
 
+/* The G7400 does not start without its own BIOS: closing with it chosen and
+ * no BIOS in leaves the console as it was when the window opened. */
+static void keep_startable_machine(int say)
+{
+    const int m = o2session_get_int(g_session, "machine", O2_MACHINE_ODYSSEY2);
+    if (m == O2_MACHINE_VIDEOPAC_PLUS && !o2session_have_bios(g_session, m)) {
+        o2session_set_int(g_session, "machine", g_machine_at_open);
+        if (say)
+            o2_message(g_win, "The Videopac+ G7400 has no BIOS imported, so the console stays as it was.",
+                       "Videopac+ G7400", MB_ICONINFORMATION | MB_OK);
+    }
+}
+
 static void on_command(int id, int code)
 {
     switch (id) {
@@ -488,6 +502,10 @@ static void on_command(int id, int code)
                 g_dirty = 1;
             }
             refresh_machine();
+            if (!o2session_have_bios(g_session, m) && m == O2_MACHINE_VIDEOPAC_PLUS)
+                o2_message(g_win, "The Videopac+ G7400 needs its BIOS: Machine > Import BIOS...\n\n"
+                                  "Import it here (the ROMs tab) before closing, or the console stays as it was.",
+                           "Videopac+ G7400", MB_ICONINFORMATION | MB_OK);
         }
         break;
     case IDC_USE_BIOS: setting_from_checkbox(id, "use_bios", 1); break;
@@ -570,6 +588,7 @@ static LRESULT CALLBACK prefs_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_CLOSE:
         if (!commit_address(1)) return 0;
+        keep_startable_machine(1);
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY: {
@@ -621,6 +640,7 @@ void o2_prefs_show(HWND parent, o2session *session, const o2_prefs_hooks *hooks)
     g_dpi = o2_window_dpi(parent);
     g_nitems = 0;
     g_dirty = 0;
+    g_machine_at_open = o2session_get_int(session, "machine", O2_MACHINE_ODYSSEY2);
     g_win = CreateWindowExW(WS_EX_CONTROLPARENT, L"" PREFS_CLASS, L"Preferences", PREFS_STYLE,
                             CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, parent, NULL, inst, NULL);
     if (!g_win) return;
@@ -663,6 +683,7 @@ void o2_prefs_abandon(void)
     if (!g_win) return;
     g_hooks.closed = NULL;
     commit_address(0);
+    keep_startable_machine(0);
     DestroyWindow(g_win);
 }
 

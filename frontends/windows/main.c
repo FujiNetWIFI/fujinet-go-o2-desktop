@@ -219,21 +219,14 @@ static void run_sysaction(int sa)
     }
 }
 
-/* The ROMs changed under a console that was missing some: power-cycle it so
- * the new ones are used -- the cartridge it runs again, or CONFIG. */
+/* The ROMs changed under a console that was missing some: what the machine
+ * is missing is a snapshot taken at power-up, so the session restarts to see
+ * the new ones -- the cartridge it runs again, or CONFIG. */
 static void apply_new_roms(unsigned was_missing)
 {
     o2_prefs_roms_changed();
-    if (was_missing) {
-        const char *cart = o2session_cart_path(g_session);
-        if (cart && *cart) {
-            char again[1024];
-            snprintf(again, sizeof again, "%s", cart);
-            o2session_load_cart(g_session, again);
-        } else {
-            o2session_reset_to_config(g_session);
-        }
-    }
+    if (was_missing)
+        restart_session();
     o2_controllers_window_refresh();
     update_status();
     update_banner();

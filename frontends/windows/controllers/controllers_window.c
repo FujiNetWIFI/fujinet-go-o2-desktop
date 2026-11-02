@@ -100,7 +100,7 @@ static int g_dpi = 96;
  * key or pad button to bind to that target. */
 static int g_map_state = -2;
 static WPARAM g_swallow_vk;     /* the key Map took: its repeats and release too */
-static char g_hint[200];
+static char g_hint[300];
 
 static control g_ctl[MAX_CONTROLS];
 static int g_nctl;
