@@ -848,7 +848,7 @@ void ControllersWindow::setMapState(int state)
 void ControllersWindow::bound(int target, const QString &what, const char *stolen)
 {
     setMapState(-1);
-    m_hint->setText(stolen[0] ? QStringLiteral("%1 is now %2 (was %3)").arg(local(o2_target_name(target)), what, local(stolen))
+    m_hint->setText(stolen[0] ? QStringLiteral("%1 is now %2 (taken from %3)").arg(local(o2_target_name(target)), what, local(stolen))
                               : QStringLiteral("%1 is now %2").arg(local(o2_target_name(target)), what));
 }
 

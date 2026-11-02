@@ -661,7 +661,8 @@ QWidget *DebuggerWindow::buildBreaks()
     m_bpTable->setHorizontalHeaderLabels({ QStringLiteral("On"), QStringLiteral("ID"), QStringLiteral("Type"),
                                            QStringLiteral("Where"), QStringLiteral("Range"), QStringLiteral("Hits"),
                                            QStringLiteral("Condition") });
-    m_bpTable->horizontalHeader()->setStretchLastSection(true);
+    m_bpTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_bpTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
     m_bpTable->verticalHeader()->setVisible(false);
     m_bpTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_bpTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -744,7 +745,6 @@ void DebuggerWindow::refreshBps()
         m_bpTable->setItem(i, 5, new QTableWidgetItem(QString::number(bps[i].hits)));
         m_bpTable->setItem(i, 6, new QTableWidgetItem(QString::fromUtf8(bps[i].condition)));
     }
-    if (n > 0) m_bpTable->resizeColumnsToContents();
     m_bpFilling = false;
 }
 

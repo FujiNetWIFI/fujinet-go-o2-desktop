@@ -84,6 +84,8 @@ MainWindow::MainWindow(o2session *session, QWidget *parent)
     auto *bh = new QHBoxLayout(m_banner);
     bh->setContentsMargins(10, 4, 10, 4);
     m_bannerText = new QLabel;
+    /* wrapped: two notices must not widen the window */
+    m_bannerText->setWordWrap(true);
     m_bannerText->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
     auto *bannerImport = new QPushButton(QStringLiteral("Import BIOS..."));
     bannerImport->setFocusPolicy(Qt::NoFocus);

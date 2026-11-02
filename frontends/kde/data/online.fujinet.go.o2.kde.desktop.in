@@ -6,6 +6,6 @@ Comment=Magnavox Odyssey 2 and Philips Videopac with a built-in FujiNet
 Exec=fujinet-go-o2-kde %f
 Icon=online.fujinet.go.o2.kde
 Terminal=false
-Categories=Game;Emulator;Qt;
+Categories=Game;Emulator;
 Keywords=Magnavox;Odyssey 2;Videopac;Philips;8048;FujiNet;emulator;retro;
 StartupNotify=true

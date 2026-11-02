@@ -443,14 +443,14 @@ QWidget *VideoTab::buildRegisters()
         m_regs->item(off, 0)->setText(QStringLiteral("$") + hx(off, 2));
     }
     m_regsFilling = false;
-    /* a store while the machine is stopped, as the chip's registers take it */
+    /* a store into the chip's registers (the engine takes one running too) */
     connect(m_regs, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *it) {
         if (m_regsFilling || it->column() != 2) return;
         bool ok = false;
         QString t = it->text().trimmed();
         if (t.startsWith(QLatin1Char('$'))) t = t.mid(1);
         const unsigned v = t.toUInt(&ok, 16);
-        if (ok && v <= 0xFF && o2debug_is_stopped(m_dbg))
+        if (ok && v <= 0xFF)
             o2debug_vdc_write(m_dbg, (unsigned)it->row(), (uint8_t)v);
         refresh();
     });
@@ -697,8 +697,9 @@ void VideoTab::refreshRegisters()
                 m_regHot[(size_t)off] = 0;
             }
         }
-        setCell(m_regs, off, 3, QString::fromUtf8(text));
-        m_regs->item(off, 3)->setToolTip(QString::fromUtf8(text));
+        const QString decoded = QString::fromUtf8(text);
+        setCell(m_regs, off, 3, decoded);
+        if (m_regs->item(off, 3)->toolTip() != decoded) m_regs->item(off, 3)->setToolTip(decoded);
     }
     m_regsFilling = false;
 }
