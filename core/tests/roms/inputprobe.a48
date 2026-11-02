@@ -1,0 +1,65 @@
+; inputprobe.a48 -- a cartridge for the tests: calls the BIOS's readkey and
+; getjoystick the way the FujiNet apps do and leaves what they return in the
+; console's external RAM, where the test reads it:
+;   xram[0] = readkey's A (a new key 0-47, $C0+key while held, $FF none)
+;   xram[1] = getjoystick R3 (up $FF / down $01), xram[2] = R2 (left $FF / right $01)
+;   xram[3] = 1 when the button is down
+;   xram[4] = a counter of passes
+; The stand-in's readkey turns the external interrupt back on when it returns, so
+; the vertical-blank handler must acknowledge the VDC (a read of $A1: INT is
+; level-sensitive) as CONFIG's does. Assembled by build-roms.sh into test_rom.h.
+        cpu     8048
+        org     400h
+        jmp     start           ; the BIOS's reset lands here
+        org     402h
+        jmp     isr
+        org     404h
+        retr
+        org     410h
+isr:    sel     rb1
+        mov     r7,a
+        in      a,p1
+        mov     r6,a
+        mov     a,#0B7h         ; P1: the VDC selected, reads on
+        outl    p1,a
+        mov     r0,#0A1h
+        movx    a,@r0           ; status: clears the interrupt
+        mov     a,r6
+        outl    p1,a
+        mov     a,r7
+        retr
+start:  dis     i
+        dis     tcnti
+        mov     a,#0AFh         ; P1: RAM and cartridge selected, VDC parked
+        outl    p1,a
+loop:   sel     rb0
+        mov     r7,#0FFh        ; no key was reported last time
+        call    0B0h            ; readkey
+        sel     rb0
+        mov     r0,#0
+        movx    @r0,a
+        mov     a,#0AFh
+        outl    p1,a
+        mov     a,#0BBh         ; P1: the stick buffer on (CONFIG's P1_JOY)
+        outl    p1,a
+        mov     r1,#0
+        call    38Fh            ; getjoystick, stick 0
+        mov     a,#0AFh
+        outl    p1,a
+        mov     a,r3
+        mov     r0,#1
+        movx    @r0,a
+        mov     a,r2
+        mov     r0,#2
+        movx    @r0,a
+        clr     a
+        jf0     down
+        jmp     store
+down:   mov     a,#1
+store:  mov     r0,#3
+        movx    @r0,a
+        mov     r0,#4
+        movx    a,@r0
+        inc     a
+        movx    @r0,a
+        jmp     loop

@@ -6,3 +6,7 @@ o2_test(o2_headless o2_headless.c)
 # MAME (tools/ab/config_golden.py): no ROM needed.
 o2_test(config_frames_test config_frames_test.c)
 add_test(NAME config_frames COMMAND config_frames_test)
+
+# The stand-in's readkey and getjoystick, with a cartridge of the tests' own.
+o2_test(stub_test stub_test.c)
+add_test(NAME stub_boot COMMAND stub_test)
