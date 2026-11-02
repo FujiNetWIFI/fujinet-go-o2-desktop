@@ -1,0 +1,40 @@
+; vblank.a48 -- the 8244's vblank interrupt over twelve frames, acknowledged each
+; time, with the event counter counting T1's falling edges (hblank) the whole
+; way: the trace shows the cycle each INT is accepted at and where every edge
+; falls (the frame period is 263 lines of 22.75 cycles, 5983.25 cycles).
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    mov a,#0B7h             ; P13 low: the 8244 selected for reads
+    outl p1,a
+    sel rb1
+    mov r7,#0
+    sel rb0
+    clr a
+    mov t,a
+    strt cnt                ; the event counter follows T1 over all the frames
+    en i
+    mov r3,#0
+v_o:
+    mov r2,#192
+v_i:
+    djnz r2,v_i
+    djnz r3,v_o
+    jmp finish
+
+xint:
+    sel rb1
+    inc r7
+    mov r0,#0A1h
+    movx a,@r0              ; acknowledge
+    mov r5,a
+    mov a,r7
+    xrl a,#12
+    jnz x_ret
+    dis i                   ; twelve frames, then stop taking them
+x_ret:
+    retr
+tint:
+    retr
+    include "common_end.inc"

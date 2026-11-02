@@ -1,0 +1,134 @@
+; mb.a48 -- the memory bank bit (A11): SEL MB0 / SEL MB1 act only on the next JMP
+; or CALL (the PC keeps its own bit 11 while it runs), conditional jumps keep
+; the bit of their page, CALL pushes and RET/RETR restore all twelve bits, the
+; PC wraps inside its 2K bank ($BFF -> $800 with MB1), MOVP / JMPP in the upper
+; bank, a MB1 CALL from the lower bank landing in the cartridge's upper half,
+; and an interrupt taken in the upper bank: the routine runs in the lower one
+; (A11 forced to 0 for its JMPs and CALLs) and RETR comes back up. The upper
+; half of the 2K cartridge ($800-$BFF) is the same bytes as $C00-$FFF.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    sel rb1
+    mov r7,#0               ; bank 1: the timer interrupt count
+    mov r6,#0
+    sel rb0
+    mov r7,#0               ; passes through the upper bank
+    mov r6,#0
+    mov r5,#0
+    sel mb1
+    jmpx 800h               ; MB1: the jump lands in the upper bank
+
+; ---- back in the lower bank with MB0 selected, from the upper bank
+    org 100h
+lo_back:
+    sel mb1                 ; MB1 while the PC is in the lower bank: the CALL
+    callx 0C0h              ; goes to $8C0, in the cartridge's upper half
+    sel mb0
+    callx 0C0h              ; and with MB0 it is the ROM's $0C0
+    jmp finish
+
+    org 0C0h
+lo_sub:                     ; (the ROM's $0C0; $8C0 is a different routine)
+    inc r5
+    ret
+
+    org 3D0h
+xint:
+    retr
+tint:                       ; the timer interrupt: forced into the lower bank
+    sel rb1
+    inc r7
+    mov a,#0FCh
+    mov t,a
+    call isr_sub            ; A11 is 0 for the routine's CALLs and JMPs
+    jmp isr_end
+isr_sub:
+    inc r6
+    ret
+isr_end:
+    retr                    ; RETR restores the upper-bank PC
+    include "common_end.inc"
+
+; ---- the upper bank: $800-$BFF, cartridge offsets $400-$7FF
+    org 800h
+m1_start:
+    inc r7
+    mov a,r7
+    xrl a,#2
+    jz m1_exit
+    callx m1_sub1           ; CALL with MB1 from the upper bank
+    callx 0B0h              ; $8B0
+    clr a
+    jz m1_z1                ; a conditional jump keeps the upper bank
+    inc r6
+m1_z1:
+    mov a,#1
+    jz m1_z2
+    inc r5
+m1_z2:
+    jnz m1_z3
+    inc r6
+m1_z3:
+    mov a,#58h
+    movp a,@a               ; reads $858 (the page of the PC, upper bank)
+    movp3 a,@a              ; and page 3 of the ROM
+    mov a,#0F0h
+    jmpp @a                 ; reads $8F0: the target is $8D0
+    inc r6                  ; (skipped)
+
+    org 8A0h
+m1_sub1:
+    inc r5
+    ret
+    org 8B0h
+    inc r5
+    inc r5
+    ret
+    org 8C0h
+    inc r6                  ; the MB1 CALL from the lower bank lands here
+    ret
+    org 8D0h
+m1_jm:
+    inc r6
+    dis tcnti
+    mov a,#0FCh             ; the timer interrupts every 96 cycles
+    mov t,a
+    en tcnti
+    strt t
+    mov r0,#0
+    mov r1,#2
+m1_w:
+    djnz r0,m1_w            ; ~512 cycles: several interrupts in the upper bank
+    djnz r1,m1_w
+    stop tcnt
+    dis tcnti
+    jmpx 0FF0h              ; the mirror of $BF0: a run of NOPs up to $FFF
+    org 8F0h
+    db 0D0h                 ; the JMPP entry for A = $F0
+
+; the NOPs end at $BFF, which is $FFF too: from there the PC wraps to $800
+    org 0BF0h
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop                     ; $FFF: the next fetch is $800
+
+    org 880h
+m1_exit:                    ; second pass: leave with MB0 while still up here
+    sel mb0
+    callx 0C0h              ; MB0: the ROM's $0C0, the return address has A11
+    jmpx lo_back            ; MB0: the lower bank

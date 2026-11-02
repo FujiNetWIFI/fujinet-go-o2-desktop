@@ -1,0 +1,119 @@
+; extint.a48 -- the external interrupt, from the 8244's vblank (the only thing
+; that drives INT on the Odyssey 2): raised at cycle 5979 and again at 11962,
+; level-sensitive, cleared by reading the 8244's status register ($A1) with P13
+; and P16 low. EN I / DIS I, the vector at 3, RETR, a routine that does not
+; acknowledge (the pending line re-enters at once after RETR), JNI on a pending
+; but disabled interrupt, and the timer interrupt arriving while the INT
+; routine runs (taken after RETR) and with the INT pending too (INT first).
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    sel rb1
+    mov r7,#0               ; INT entries
+    mov r6,#0               ; mode: 0 = do not acknowledge
+    mov r5,#0               ; the status read
+    mov r4,#0               ; timer entries
+    sel rb0
+    mov a,#0B7h             ; P13 low (the 8244 selected), P16 low
+    outl p1,a
+    en i
+
+; ---- wait for the first INT (cycle 5979): sixteen rounds of 386 cycles
+    mov r3,#16
+p1_o:
+    mov r2,#192
+p1_i:
+    djnz r2,p1_i
+    djnz r3,p1_o
+    sel rb1
+    mov a,r7                ; two entries: the first routine did not acknowledge
+    sel rb0
+
+; ---- the second INT (cycle 11962): disabled across it, JNI sees it pending
+    mov r3,#14
+p2_o:
+    mov r2,#192
+p2_i:
+    djnz r2,p2_i
+    djnz r3,p2_o
+    dis i
+    mov r3,#2
+p3_o:
+    mov r2,#192
+p3_i:
+    djnz r2,p3_i
+    djnz r3,p3_o
+    jni j_taken             ; the line is up
+    inc r4
+j_taken:
+    sel rb1
+    mov r6,#1               ; this time acknowledge
+    sel rb0
+    en i                    ; and it is taken at once
+    nop
+    nop
+    sel rb1
+    mov a,r7
+    sel rb0
+
+; ---- timer interrupt inside the INT routine: both overflow and INT pending
+; after the third vblank (cycle 17945.75); the timer is set to run out inside
+; the routine, and with TCNTI enabled it enters after RETR
+    dis tcnti
+    mov a,#0FFh
+    mov t,a
+    en tcnti
+    strt t
+    sel rb1
+    mov r6,#2               ; mode 2: the INT routine waits for the timer
+    sel rb0
+    mov r3,#16
+p4_o:
+    mov r2,#192
+p4_i:
+    djnz r2,p4_i
+    djnz r3,p4_o
+    sel rb1
+    mov a,r4
+    sel rb0
+    stop tcnt
+    dis tcnti
+    dis i
+    jmp finish
+
+; ---- INT: bank 1 holds the count (r7) and the mode (r6)
+xint:
+    sel rb1
+    inc r7
+    mov a,r6
+    jz x_noack
+    dec a
+    jz x_ack
+    ; mode 2: acknowledge, and let the timer overflow while the routine runs
+    mov r0,#0A1h
+    movx a,@r0
+    mov r5,a
+    mov a,#0FFh
+    mov t,a
+    mov r2,#20
+x_w:
+    djnz r2,x_w
+    mov r6,#1
+    retr
+x_ack:
+    mov r0,#0A1h
+    movx a,@r0              ; reading the status clears INT
+    mov r5,a
+    retr
+x_noack:
+    mov r6,#1               ; first time: leave the line up; RETR re-enters
+    retr
+
+tint:
+    sel rb1
+    inc r4
+    mov a,#0FAh
+    mov t,a
+    retr
+    include "common_end.inc"

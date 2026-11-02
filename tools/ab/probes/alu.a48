@@ -1,0 +1,152 @@
+; alu.a48 -- the accumulator: ADD, ADDC, ANL, ORL, XRL, CPL, CLR, INC, DEC,
+; SWAP, RL, RLC, RR, RRC, DA, XCH, XCHD with every addressing mode (Rn, @Rn,
+; #n), carry and auxiliary carry both ways, over all 256 values of A.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    mov r1,#30h             ; @r1 = a RAM cell holding $0F
+    mov @r1,#0Fh
+    mov r2,#9Ch
+    mov r3,#0A5h
+    mov r7,#0               ; r7 = the value of A under test
+
+; ---- ADD / ADDC over all A: carry out, auxiliary carry, carry in
+l_add:
+    clr c
+    mov a,r7
+    addc a,#01h
+    mov a,r7
+    cpl c
+    addc a,#0FFh
+    mov a,r7
+    add a,#08h
+    mov a,r7
+    add a,#88h
+    mov a,r7
+    add a,@r1
+    mov a,r7
+    addc a,@r1
+    mov a,r7
+    add a,r2
+    mov a,r7
+    addc a,r2
+    mov a,r7
+    add a,#0F0h
+    inc r7
+    mov a,r7
+    jnz l_add
+
+; ---- ANL / ORL / XRL in all modes
+l_log:
+    mov a,r7
+    anl a,#0A5h
+    mov a,r7
+    orl a,#5Ah
+    mov a,r7
+    xrl a,#0FFh
+    mov a,r7
+    anl a,r3
+    mov a,r7
+    orl a,r3
+    mov a,r7
+    xrl a,r3
+    mov a,r7
+    anl a,@r1
+    mov a,r7
+    orl a,@r1
+    mov a,r7
+    xrl a,@r1
+    inc r7
+    mov a,r7
+    jnz l_log
+
+; ---- CPL, SWAP, rotates (carry in and out), INC/DEC A, CLR
+l_rot:
+    clr c
+    mov a,r7
+    cpl a
+    swap a
+    rl a
+    rr a
+    rlc a
+    rrc a
+    cpl c
+    mov a,r7
+    rlc a
+    mov a,r7
+    rrc a
+    mov a,r7
+    inc a
+    dec a
+    dec a
+    clr a
+    inc r7
+    mov a,r7
+    jnz l_rot
+
+; ---- DA over every A and every C/AC pair (MOV PSW,A sets them)
+    mov r6,#0
+l_da_c:
+    mov r7,#0
+l_da:
+    mov a,r6
+    mov psw,a
+    mov a,r7
+    da a
+    inc r7
+    mov a,r7
+    jnz l_da
+    mov a,r6
+    add a,#40h
+    mov r6,a
+    jnz l_da_c
+
+; ---- exchanges and increments
+    mov r7,#0
+    mov r0,#31h
+l_xch:
+    mov a,r7
+    xch a,r3
+    xch a,@r1
+    mov @r0,a
+    xchd a,@r1
+    mov a,r7
+    xchd a,@r0
+    xch a,r2
+    inc r3
+    dec r3
+    dec r2
+    inc @r1
+    inc @r0
+    inc r7
+    mov a,r7
+    jnz l_xch
+
+; ---- the flags: C, F0, F1 and the PSW
+    clr c
+    cpl c
+    cpl c
+    clr f0
+    cpl f0
+    clr f0
+    cpl f1
+    clr f1
+    cpl f1
+    mov a,psw
+    mov a,#0A0h
+    mov psw,a
+    mov a,psw
+    mov a,#0FFh
+    mov psw,a
+    mov a,psw
+    mov a,#0
+    mov psw,a
+    mov a,psw
+    jmp finish
+
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

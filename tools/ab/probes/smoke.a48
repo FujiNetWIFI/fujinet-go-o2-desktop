@@ -1,0 +1,21 @@
+; smoke.a48 -- the shortest probe: a few instructions, the pipeline's check.
+; FRAMES: 3
+    include "common.inc"
+start:
+    mov a,#5
+    add a,#3
+    mov r0,a
+    mov a,#12h
+    xch a,r0
+    mov r1,#20h
+    mov @r1,a
+    mov a,@r1
+    djnz r0,start2
+start2:
+    nop
+    jmp finish
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

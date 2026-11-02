@@ -1,0 +1,113 @@
+; ports.a48 -- P1, P2, BUS and the 8243 expander: IN, OUTL, ORL, ANL, INS, MOVD,
+; ORLD, ANLD. An IN returns the pins ANDed with the output latch (quasi-
+; bidirectional: no key or stick is pressed, so the pins read high); OUTL / ORL
+; / ANL change the latch; the expander operations walk P2's low nibble through
+; the command and the data, with the PROG strobe around them.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+; ---- after reset both latches are $FF
+    in a,p1
+    in a,p2
+    ins a,bus
+
+; ---- P1: OUTL / ORL / ANL, and IN reads the latch
+    mov a,#0A5h
+    outl p1,a
+    in a,p1
+    orl p1,#0Ah
+    in a,p1
+    anl p1,#0FDh
+    in a,p1
+    anl p1,#0F0h
+    in a,p1
+    orl p1,#0FFh
+    in a,p1
+
+; ---- P2 the same; its low bits also select a keyboard row when P12 is low
+    mov a,#5Ah
+    outl p2,a
+    in a,p2
+    orl p2,#81h
+    in a,p2
+    anl p2,#7Eh
+    in a,p2
+    mov a,#0
+    outl p2,a
+    in a,p2
+    anl p1,#0FBh            ; P12 low: the keyboard scanner is on
+    mov r2,#8
+k_rows:
+    mov a,r2
+    dec a
+    outl p2,a
+    in a,p2                 ; no key down: $FF masked by the latch
+    ins a,bus               ; and no stick
+    djnz r2,k_rows
+    orl p1,#04h             ; P12 high again
+    mov a,#0FFh
+    outl p2,a
+
+; ---- BUS: an open bus reads $FF; OUTL / ORL / ANL drive it
+    mov a,#0C3h
+    outl bus,a
+    ins a,bus
+    orl bus,#0Fh
+    anl bus,#0F0h
+    ins a,bus
+
+; ---- the 8243 expander: ports 4-7 through P2's low nibble and PROG
+    mov a,#0Ah
+    movd p4,a
+    in a,p2
+    movd p5,a
+    movd p6,a
+    movd p7,a
+    mov a,#0
+    movd a,p4               ; input mode: A = P20-P23 = $0F
+    in a,p2
+    movd a,p5
+    movd a,p6
+    movd a,p7
+    mov a,#3
+    orld p4,a
+    in a,p2
+    orld p5,a
+    orld p6,a
+    orld p7,a
+    mov a,#0Ch
+    anld p4,a
+    in a,p2
+    anld p5,a
+    anld p6,a
+    anld p7,a
+    mov a,#0A5h             ; only the low nibble is used
+    movd p7,a
+    in a,p2
+    mov a,#0F0h
+    outl p2,a               ; the high nibble of P2 survives the expander
+    movd p4,a
+    in a,p2
+    orld p5,a
+    movd a,p6
+    in a,p2
+
+; ---- OUTL / ORL / ANL P1 steps the cartridge bank (P10, P11); the code is in the ROM
+    mov r3,#4
+b_loop:
+    mov a,r3
+    dec a
+    outl p1,a
+    in a,p1
+    djnz r3,b_loop
+    mov a,#0FFh
+    outl p1,a
+    jmp finish
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

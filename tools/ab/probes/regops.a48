@@ -1,0 +1,115 @@
+; regops.a48 -- every register form of the accumulator and register
+; instructions on each of R0-R7 (ADD ADDC ANL ORL XRL XCH MOV INC DEC DJNZ-less)
+; and each indirect form on @R0 and @R1 (ADD ADDC ANL ORL XRL XCH XCHD MOV INC),
+; from a handful of operand values with the carry both ways. alu.a48 runs the
+; arithmetic over all 256 values of A; this covers every opcode of the families.
+; FRAMES: 20
+    include "common.inc"
+
+; one register: A = value, carry c, the register = operand
+rtest macro rn,aval,rval
+    mov rn,#rval
+    mov a,#aval
+    add a,rn
+    mov a,#aval
+    addc a,rn
+    mov a,#aval
+    anl a,rn
+    mov a,#aval
+    orl a,rn
+    mov a,#aval
+    xrl a,rn
+    mov a,#aval
+    xch a,rn
+    mov a,rn
+    mov rn,a
+    inc rn
+    dec rn
+    dec rn
+    mov a,rn
+    endm
+
+; one indirect register: ram[28h] holds the operand, ri points at it
+itest macro ri,aval,rval
+    mov ri,#28h
+    mov @ri,#rval
+    mov a,#aval
+    add a,@ri
+    mov a,#aval
+    addc a,@ri
+    mov a,#aval
+    anl a,@ri
+    mov a,#aval
+    orl a,@ri
+    mov a,#aval
+    xrl a,@ri
+    mov a,#aval
+    xch a,@ri
+    mov a,#aval
+    xchd a,@ri
+    mov a,@ri
+    mov @ri,a
+    inc @ri
+    mov a,@ri
+    mov @ri,#aval
+    mov a,@ri
+    endm
+
+; both carries, three operand pairs, for the register named
+rall macro rn
+    clr c
+    rtest rn,0FFh,001h
+    cpl c
+    rtest rn,080h,080h
+    clr c
+    rtest rn,00Fh,0F1h
+    cpl c
+    rtest rn,055h,0AAh
+    endm
+
+iall macro ri
+    clr c
+    itest ri,0FFh,001h
+    cpl c
+    itest ri,080h,080h
+    clr c
+    itest ri,00Fh,0F1h
+    cpl c
+    itest ri,055h,0AAh
+    endm
+
+start:
+    jmp 400h                ; the code is too big for the ROM: pages 4-7 of the cartridge
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"
+
+; ---- the cartridge: the register forms in $400-$7FF, MB1 for the rest in $800-$BFF
+    org 400h
+    rall r0
+    rall r1
+    rall r2
+    rall r3
+    rall r4
+    rall r5
+    rall r6
+    rall r7
+    sel mb1
+    jmpx 800h
+
+    org 800h
+    iall r0
+    iall r1
+    sel rb1                 ; and the same on bank 1
+    rall r0
+    rall r3
+    rall r5
+    rall r7
+    iall r1
+    sel rb0
+    sel mb0
+    jmpx finish

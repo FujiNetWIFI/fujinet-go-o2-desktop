@@ -1,0 +1,258 @@
+; branch.a48 -- jumps and calls: every conditional jump taken and not taken
+; (JZ JNZ JC JNC JF0 JF1 JB0-JB7 JT0 JNT0 JNI DJNZ Rn), CALL and JMP into all
+; eight pages, RET, conditional jumps whose opcode is the last byte of a page
+; (the target is in the page of the OPERAND byte), and a JMP whose operand
+; byte is fetched after the PC wraps from $7FF to $000.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    mov r7,#0               ; the value of A under test
+    mov r6,#0               ; counts of taken branches, one register each
+    mov r5,#0
+    mov r4,#0
+
+; ---- JZ/JNZ/JBn over every A, and the carry both ways
+l_a:
+    mov a,r7
+    jz a_z
+    inc r6
+a_z:
+    jnz a_nz
+    inc r6
+a_nz:
+    jb0 a_b0
+    inc r5
+a_b0:
+    jb1 a_b1
+    inc r5
+a_b1:
+    jb2 a_b2
+    inc r5
+a_b2:
+    jb3 a_b3
+    inc r5
+a_b3:
+    jb4 a_b4
+    inc r4
+a_b4:
+    jb5 a_b5
+    inc r4
+a_b5:
+    jb6 a_b6
+    inc r4
+a_b6:
+    jb7 a_b7
+    inc r4
+a_b7:
+    add a,#80h              ; C = the old bit 7
+    jc a_c
+    inc r6
+a_c:
+    jnc a_nc
+    inc r5
+a_nc:
+    inc r7
+    mov a,r7
+    jnz l_a
+
+; ---- F0, F1, T0, and the INT pin (not asserted): taken and not
+    clr f0
+    jf0 f_0a
+    cpl f0
+f_0a:
+    jf0 f_0b
+    inc r6
+f_0b:
+    clr f1
+    jf1 f_1a
+    cpl f1
+f_1a:
+    jf1 f_1b
+    inc r6
+f_1b:
+    jt0 t_0a
+    inc r5
+t_0a:
+    jnt0 t_0b
+    inc r5
+t_0b:
+    jni i_a
+    inc r4
+i_a:
+
+; ---- DJNZ on each register, counts of 1 and 3
+    mov r0,#1
+    mov r1,#3
+    mov r2,#1
+    mov r3,#3
+    mov r4,#1
+    mov r5,#3
+    mov r6,#1
+    mov r7,#3
+d_0:
+    djnz r0,d_0
+d_1:
+    djnz r1,d_1
+d_2:
+    djnz r2,d_2
+d_3:
+    djnz r3,d_3
+d_4:
+    djnz r4,d_4
+d_5:
+    djnz r5,d_5
+d_6:
+    djnz r6,d_6
+d_7:
+    djnz r7,d_7
+
+; ---- CALL into all eight pages (pages 4-7 are in the cartridge)
+    mov r7,#0
+    call sub0
+    call sub1
+    call sub2
+    call sub3
+    call sub4
+    call sub5
+    call sub6
+    call sub7
+    mov r0,a
+    jmp 110h                ; and a JMP chain through the pages
+sub0:
+    inc r7
+    ret
+
+; ---- conditional jumps from the last byte of a page. The opcode sits at $xFF
+; and its operand at $x00 + 100h, so the target is in the NEXT page. Each test
+; takes the jump once and then falls through.
+    org 0E0h
+edge0:                      ; JC at $0FF -> $140
+    clr c
+    cpl c
+e0_loop:
+    jmp 0FFh
+    org 0FFh
+    db 0F6h
+    db 40h
+    inc r5                  ; $101: not taken
+    jmp edge1
+    org 140h
+    inc r4                  ; $140: taken
+    clr c
+    jmp e0_loop
+
+    org 1E0h
+edge1:                      ; JNZ at $1FF -> $240
+    mov a,#5
+e1_loop:
+    jmp 1FFh
+    org 1FFh
+    db 96h
+    db 40h
+    inc r5                  ; $201: not taken
+    jmp edge2
+    org 240h
+    inc r4                  ; $240: taken
+    clr a
+    jmp e1_loop
+
+    org 2E0h
+edge2:                      ; JNC at $2FF -> $340
+    clr c
+e2_loop:
+    jmp 2FFh
+    org 2FFh
+    db 0E6h
+    db 40h
+    inc r5                  ; $301: not taken
+    jmp edge3
+    org 304h
+wrapped:
+    inc r4                  ; where the wrapped JMP lands
+    jmp finish
+    org 340h
+    inc r4                  ; $340: taken
+    cpl c
+    jmp e2_loop
+
+; ---- subroutines in pages 1-3, the JMP chain
+    org 110h
+    mov r1,#1
+    jmp 210h
+    org 180h
+sub1:
+    inc r7
+    ret
+    org 210h
+    mov r2,#2
+    jmp 310h
+    org 280h
+sub2:
+    inc r7
+    ret
+    org 310h
+    mov r3,#3
+    jmp 410h
+    org 380h
+sub3:
+    inc r7
+    mov a,r7
+    ret
+
+; ---- the cartridge: pages 4-7
+    org 410h
+    mov r4,#4
+    jmp 510h
+    org 480h
+sub4:
+    inc r7
+    ret
+    org 4E0h
+edge3:                      ; JZ at $4FF -> $540
+    clr a
+e3_loop:
+    jmp 4FFh
+    org 4FFh
+    db 0C6h
+    db 40h
+    inc r5                  ; $501: not taken
+    jmp 7F0h
+    org 510h
+    mov r5,#5
+    jmp 610h
+    org 540h
+    inc r4                  ; $540: taken
+    inc a
+    jmp e3_loop
+    org 580h
+sub5:
+    inc r7
+    ret
+    org 610h
+    mov r6,#6
+    jmp 710h
+    org 680h
+sub6:
+    inc r7
+    ret
+    org 710h
+    mov r7,#7
+    jmp edge0
+    org 780h
+sub7:
+    inc r7
+    ret
+    org 7F0h
+    jmp 7FDh
+    org 7FDh
+    nop
+    nop
+    db 64h                  ; $7FF: JMP $3xx; its operand is fetched from $000 ($04)
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

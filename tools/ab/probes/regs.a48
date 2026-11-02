@@ -1,0 +1,148 @@
+; regs.a48 -- the register banks, the PSW, the stack and the internal RAM:
+; SEL RB0/RB1, MOV A,PSW / MOV PSW,A (carry, AC, F0, BS and SP all settable),
+; CALL / RET / RETR with the PSW saved on the stack, a stack nested ten deep
+; (eight levels, so two frames are overwritten), @R0/@R1 reaching the
+; registers and the stack, and RAM addresses that wrap at 64.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+; ---- both banks, written through R0-R7 and read back through A
+    mov r0,#10h
+    mov r1,#11h
+    mov r2,#12h
+    mov r3,#13h
+    mov r4,#14h
+    mov r5,#15h
+    mov r6,#16h
+    mov r7,#17h
+    sel rb1
+    mov r0,#20h
+    mov r1,#21h
+    mov r2,#22h
+    mov r3,#23h
+    mov r4,#24h
+    mov r5,#25h
+    mov r6,#26h
+    mov r7,#27h
+    mov a,psw
+    xch a,r5
+    xch a,r5
+    sel rb0
+    mov a,r5
+    mov a,psw
+    sel rb1
+    mov a,r7
+    sel rb0
+
+; ---- the whole RAM through @R0, with the registers and the stack in it
+    mov r1,#0               ; r1 = a running sum of ram[8..63]
+    mov r0,#8
+    mov r2,#25
+f_fill:
+    mov a,r2
+    mov @r0,a
+    add a,#3
+    mov r2,a
+    inc r0
+    mov a,r0
+    add a,#0C0h             ; carry once r0 reaches 64
+    jnc f_fill
+    mov r0,#8
+f_sum:
+    mov a,@r0
+    add a,r1
+    mov r1,a
+    inc r0
+    mov a,r0
+    add a,#0C0h
+    jnc f_sum
+
+; ---- addresses wrap at 64: ram[45h] is ram[05h]
+    mov r0,#45h
+    mov @r0,#0AAh
+    mov r1,#05h
+    mov a,@r1
+    mov r0,#0FFh
+    mov a,@r0               ; = ram[3Fh]
+    mov @r0,#0BBh
+    mov r1,#3Fh
+    mov a,@r1
+    inc @r0
+    mov a,@r1
+    mov r0,#01h             ; @R0 reaching R1
+    mov @r0,#55h
+    mov a,r1
+    mov r0,#09h             ; the stack: ram[8..23]
+    mov @r0,#66h
+    mov a,@r0
+
+; ---- the PSW: every field settable, and read back
+    mov a,#0D2h             ; C AC set, F0 clear, BS = 1, SP = 2
+    mov psw,a
+    mov a,psw
+    mov r0,#2Ah
+    mov r5,#77h
+    mov a,#0A5h             ; C, F0 set; BS = 0; SP = 5
+    mov psw,a
+    mov a,psw
+    mov a,r5
+    mov a,#0
+    mov psw,a
+
+; ---- CALL saves the PSW's upper nibble, RET ignores it, RETR restores it
+    mov a,#0A0h             ; C and F0 set
+    mov psw,a
+    call chg
+    mov a,psw               ; flags as the subroutine left them (BS = 1)
+    sel rb0
+    clr f0
+    mov a,#0A0h
+    mov psw,a
+    call chgr
+    mov a,psw               ; restored by RETR: C, F0 set again, BS = 0
+    mov a,#0
+    mov psw,a
+
+; ---- nest ten calls: the stack holds eight, so the first two frames are lost
+    mov r7,#10
+    mov r6,#10
+    call rec
+rec_out:
+    mov a,psw
+    mov r0,#8               ; dump the stack as it ended
+    mov r1,#16
+r_dump:
+    mov a,@r0
+    inc r0
+    djnz r1,r_dump
+    jmp finish
+
+rec:
+    djnz r7,rec_go
+    ret
+rec_go:
+    call rec
+rec_ret:
+    djnz r6,rec_pop
+    jmp rec_out
+rec_pop:
+    ret
+
+chg:                        ; changes C, F0 and the bank, then RET
+    clr c
+    cpl f0
+    sel rb1
+    ret
+chgr:                       ; the same, then RETR: the caller's flags come back
+    clr c
+    cpl f0
+    sel rb1
+    retr
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

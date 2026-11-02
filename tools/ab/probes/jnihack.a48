@@ -1,0 +1,94 @@
+; jnihack.a48 -- MAME's "JNI hack": when the INT line goes up right after a JNI
+; that fell through, the interrupt is taken as if that JNI had jumped (the
+; return address is the JNI's target), because the WY-100 needs it. Three
+; polling loops of different lengths meet the INT at frames 0, 1 and 2 on
+; different instruction phases (the 8244 raises INT at cycle 5978, 11962 and
+; 17945.25 +): which of them lands right after a JNI is decided by the cycle
+; counts, and the trace shows which return address each interrupt got.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    sel rb1
+    mov r7,#0               ; interrupts taken
+    mov r6,#0               ; JNI targets reached
+    sel rb0
+    mov a,#0B7h             ; P13 low: the 8244 selected for reads
+    outl p1,a
+    mov r4,#0
+    en i
+
+; ---- frame 0: wait with a loop of 2-cycle instructions, then poll with JNI;JMP
+    mov r3,#15
+w0_o:
+    mov r2,#192
+w0_i:
+    djnz r2,w0_i
+    djnz r3,w0_o
+l0:
+    jni got0                ; falls through: the INT line is not up yet
+    jmp l0
+got0:
+    sel rb1
+    inc r6
+    sel rb0
+
+; ---- frame 1: poll with JNI; NOP; JMP (a 5-cycle period)
+    mov r3,#14
+w1_o:
+    mov r2,#192
+w1_i:
+    djnz r2,w1_i
+    djnz r3,w1_o
+l1:
+    jni got1
+    nop
+    jmp l1
+got1:
+    sel rb1
+    inc r6
+    sel rb0
+
+; ---- frame 2: JNI; NOP; NOP; JMP
+    mov r3,#14
+w2_o:
+    mov r2,#192
+w2_i:
+    djnz r2,w2_i
+    djnz r3,w2_o
+l2:
+    jni got2
+    nop
+    nop
+    jmp l2
+got2:
+    sel rb1
+    inc r6
+    sel rb0
+
+; ---- frame 3: a JNI that jumps because the line IS up with interrupts off
+    dis i
+    mov r3,#14
+w3_o:
+    mov r2,#192
+w3_i:
+    djnz r2,w3_i
+    djnz r3,w3_o
+    jni got3                ; taken: the line is up
+    inc r4
+got3:
+    en i                    ; the pending INT is accepted now
+    nop
+    nop
+    jmp finish
+
+xint:
+    sel rb1
+    inc r7
+    mov r0,#0A1h
+    movx a,@r0              ; acknowledge
+    retr
+
+tint:
+    retr
+    include "common_end.inc"

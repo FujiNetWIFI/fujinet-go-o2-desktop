@@ -1,0 +1,68 @@
+; illegal.a48 -- the 26 opcodes the I8048 table has no handler for (they run as a
+; one-cycle no-op: MAME's `illegal` logs and burns a cycle; $01 is the CMOS IDL
+; there, $22 / $86 / $D6 / $E5 / $F5 / $90 ... are the UPI-41's) and ENT0 CLK,
+; with the timer running so a missing cycle shows, and with registers, flags
+; and the stack set to see that nothing else moves.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    mov r0,#11h
+    mov r1,#22h
+    mov r2,#33h
+    mov a,#0A5h
+    cpl c                   ; C set
+    cpl f0
+    cpl f1
+    clr a
+    mov t,a
+    strt t
+    mov a,#0A5h
+
+    db 01h                  ; idl (CMOS only)
+    db 06h
+    db 0Bh
+    db 22h                  ; in a,dbb on a UPI-41
+    db 33h
+    db 38h
+    db 3Bh
+    db 63h
+    db 66h
+    db 73h
+    db 82h
+    db 87h
+    db 8Bh
+    db 9Bh
+    db 0A2h
+    db 0A6h
+    db 0B7h
+    db 0C0h
+    db 0C1h
+    db 0C2h
+    db 0C3h
+    db 0D6h
+    db 0E0h
+    db 0E1h
+    db 0E2h
+    db 0F3h
+    mov r3,a
+    mov a,t
+    mov a,psw
+
+    ent0 clk                ; T0 clock enable: one cycle, nothing wired
+    mov a,t
+    mov a,psw
+
+    rept 40
+    db 0F3h                 ; 40 more cycles: the timer ticks once
+    endm
+    mov a,t
+    stop tcnt
+    jmp finish
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"

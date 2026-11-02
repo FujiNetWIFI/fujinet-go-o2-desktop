@@ -1,0 +1,120 @@
+; counter.a48 -- the event counter: STRT CNT counts the falling edges of T1 (on
+; the Odyssey 2 T1 is the 8244's hblank | vblank, one edge every 22.75
+; machine cycles), sampled once a machine cycle. JT1 / JNT1 read the pin,
+; MOV T,A / MOV A,T, overflow and TF, the counter interrupt, STRT T while
+; counting and STRT CNT again. The whole run stays inside the first frame,
+; before the vblank at cycle 5524.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    sel rb1
+    mov r7,#0
+    mov r6,#0
+    sel rb0
+
+; ---- count edges, read T every seven cycles
+    stop tcnt
+    clr a
+    mov t,a
+    strt cnt
+    mov r0,#50
+c_rd:
+    rept 4
+    nop
+    endm
+    mov a,t
+    djnz r0,c_rd
+
+; ---- sample the pin with JT1 / JNT1 while counting
+    mov r1,#0
+    mov r2,#0
+    mov r0,#40
+c_jt:
+    jt1 c_hi
+    inc r1                  ; T1 low
+c_hi:
+    jnt1 c_lo
+    inc r2                  ; T1 high
+c_lo:
+    nop
+    nop
+    djnz r0,c_jt
+    mov a,t
+
+; ---- overflow after eight more edges; TF and JTF
+    stop tcnt
+    mov a,#0F8h
+    mov t,a
+    strt cnt
+c_w:
+    jtf c_got
+    jmp c_w
+c_got:
+    mov a,t
+    jtf c_got2
+    inc r5
+c_got2:
+
+; ---- a counter that stops and restarts: STRT CNT when already counting keeps
+; the T1 history; after STOP it samples T1 afresh
+    mov a,t
+    strt cnt
+    mov a,t
+    stop tcnt
+    mov a,t
+    nop
+    nop
+    nop
+    strt cnt
+    mov r0,#15
+c_k:
+    nop
+    djnz r0,c_k
+    mov a,t
+
+; ---- STRT T while counting switches to the timer (and the other way)
+    strt t
+    rept 40
+    nop
+    endm
+    mov a,t
+    strt cnt
+    rept 30
+    nop
+    endm
+    mov a,t
+    stop tcnt
+
+; ---- the counter interrupt: T preloaded to overflow after four edges, reloaded
+; by the routine, which counts its entries in bank 1
+    dis tcnti
+    mov a,#0FCh
+    mov t,a
+    en tcnti
+    strt cnt
+    mov r1,#0
+    mov r0,#40
+c_i:
+    mov r2,#10
+c_iw:
+    djnz r2,c_iw
+    djnz r0,c_i
+    dis tcnti
+    stop tcnt
+    sel rb1
+    mov a,r7
+    sel rb0
+    jmp finish
+
+tint:
+    sel rb1
+    inc r7
+    mov a,#0FCh
+    mov t,a
+    retr
+
+    org 3D0h
+xint:
+    retr
+    include "common_end.inc"

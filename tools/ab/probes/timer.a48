@@ -1,0 +1,155 @@
+; timer.a48 -- the timer and its interrupt: STRT T (the prescaler restarts), STOP
+; TCNT, MOV A,T, MOV T,A while running and stopped, the overflow and TF (read
+; and cleared by JTF), EN / DIS TCNTI, the timer interrupt (vector 7, 2 cycles
+; of entry, RETR), an overflow with the interrupt disabled (not stored), an
+; overflow inside the routine (re-entered at once after RETR) and DIS TCNTI
+; inside the routine (cancels the pending one). The external interrupt stays
+; disabled. All timing is machine cycles, so the trace is the proof.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+    clr a
+    mov r7,a                ; bank 0 r7 / bank 1 r7: interrupt counts
+    sel rb1
+    mov r7,#0
+    mov r6,#0
+    sel rb0
+
+; ---- count: read T every ten cycles for four hundred
+    clr a
+    mov t,a
+    strt t
+    mov r0,#40
+t_read:
+    rept 7
+    nop
+    endm
+    mov a,t
+    djnz r0,t_read
+
+; ---- STOP freezes T and the prescaler; MOV T,A while stopped; STRT restarts
+    stop tcnt
+    mov a,t
+    nop
+    nop
+    mov a,t
+    mov a,#0F0h
+    mov t,a
+    mov a,t
+    strt t                  ; the prescaler starts from 0 again
+    rept 20
+    nop
+    endm
+    mov a,t
+    strt t                  ; and again, 20 cycles in: the count restarts
+    rept 20
+    nop
+    endm
+    mov a,t
+    mov a,#0FAh
+    mov t,a                 ; MOV T,A while it runs
+    rept 31
+    nop
+    endm
+    mov a,t
+    nop
+    mov a,t
+    stop tcnt
+
+; ---- overflow sets TF; JTF takes the branch once and clears it
+    mov a,#0FEh
+    mov t,a
+    strt t
+w_tf:
+    jtf got_tf
+    jmp w_tf
+got_tf:
+    jtf got_tf2             ; cleared by the first JTF
+    inc r5
+got_tf2:
+    mov a,t
+    stop tcnt
+
+; ---- the overflow with TCNTI disabled is not stored
+    dis tcnti
+    mov a,#0FFh
+    mov t,a
+    strt t
+    mov r0,#25
+d_wait:
+    djnz r0,d_wait          ; 50 cycles: it overflowed once
+    en tcnti                ; nothing was stored: no interrupt
+    mov r0,#25
+e_wait:
+    djnz r0,e_wait
+    jtf have_tf             ; but TF is set
+    inc r5
+have_tf:
+    stop tcnt
+
+; ---- the timer interrupt, three kinds of routine (see tint)
+    dis tcnti
+    mov a,#0FDh
+    mov t,a
+    en tcnti
+    strt t
+    mov r0,#0
+    mov r1,#12
+i_outer:
+    mov r2,#60
+i_wait:
+    djnz r2,i_wait          ; 120 cycles
+    djnz r1,i_outer
+    dis tcnti
+    stop tcnt
+    sel rb1
+    mov a,r7                ; how many interrupts there were
+    sel rb0
+    jtf i_tf
+    inc r5
+i_tf:
+    jmp finish
+
+; ---- the timer interrupt: bank 1 keeps its count (r7) and its mode (r6)
+;   mode 0: reload for another round, go to mode 1
+;   mode 1: let the timer overflow again inside the routine; RETR re-enters
+;   mode 2: overflow inside the routine, then DIS TCNTI cancels the pending one
+tint:
+    sel rb1
+    inc r7
+    mov a,r6
+    jz t_plain
+    dec a
+    jz t_again
+    mov a,#0FFh
+    mov t,a
+    mov r2,#20
+t_wait2:
+    djnz r2,t_wait2         ; the timer overflows in here
+    dis tcnti               ; the overflow is cancelled
+    en tcnti
+    mov r6,#0
+    mov a,#0FDh
+    mov t,a
+    retr
+t_again:
+    mov a,#0FFh
+    mov t,a
+    mov r2,#20
+t_wait1:
+    djnz r2,t_wait1         ; the timer overflows in here
+    mov r6,#2
+    mov a,#0FDh
+    mov t,a
+    retr                    ; and the interrupt is taken again at once
+t_plain:
+    mov a,#0FDh
+    mov t,a
+    mov r6,#1
+    retr
+
+    org 3D0h
+xint:
+    retr
+    include "common_end.inc"

@@ -1,0 +1,182 @@
+; mem.a48 -- the external data space and the program space as data:
+; MOVX @R0/@R1 against the console's 128 bytes of RAM (selected by P14, written
+; only with P16 low), reads above $7F, MOVP A,@A and MOVP3 A,@A (the page of
+; MOVP is the page the PC is in AFTER the opcode fetch, so a MOVP on the last
+; byte of a page reads the next page), JMPP @A on the last byte of a page, JMPP
+; tables in the cartridge, and tables in the ROM and the cartridge.
+; FRAMES: 20
+    include "common.inc"
+
+start:
+; ---- with the RAM deselected (P14 high, as after reset) reads give $FF
+    mov r0,#10h
+    movx a,@r0
+    mov a,#55h
+    movx @r0,a              ; ignored
+    mov r1,#11h
+    movx a,@r1
+    mov a,#0AFh             ; P14 low, P16 low: RAM selected and writable
+    outl p1,a
+    movx a,@r0              ; 0: nothing was written
+
+; ---- fill ram[0..7F] with a pattern, sum it back, then look above $7F
+    mov r0,#0
+    mov r2,#80h
+x_fill:
+    mov a,r0
+    add a,r0
+    add a,r0
+    xrl a,#5Ah
+    movx @r0,a
+    inc r0
+    djnz r2,x_fill
+    mov r0,#0
+    mov r1,#0
+    mov r2,#80h
+x_sum:
+    movx a,@r0
+    add a,r1
+    mov r1,a
+    inc r0
+    djnz r2,x_sum
+    mov r0,#7Fh
+    movx a,@r0              ; the last cell
+    mov r0,#80h
+    movx a,@r0              ; above $7F the RAM is deselected: $FF
+    mov r0,#0FFh
+    movx a,@r0
+    mov a,#99h
+    movx @r0,a              ; ignored
+    mov r0,#81h
+    movx @r0,a              ; ignored
+    mov r0,#0
+    movx a,@r0              ; unchanged
+
+; ---- writes off (P16 high): the cell keeps its value
+    mov a,#0EFh
+    outl p1,a
+    mov r0,#20h
+    movx a,@r0
+    mov a,#0C3h
+    movx @r0,a              ; ignored
+    movx a,@r0
+    mov a,#0AFh
+    outl p1,a
+    mov a,#0C3h
+    movx @r0,a              ; written
+    movx a,@r0
+    mov r1,#21h
+    movx @r1,a
+    movx a,@r1
+    mov a,#0BFh             ; RAM deselected again (P14 high)
+    outl p1,a
+    movx a,@r0              ; $FF
+
+; ---- MOVP A,@A / MOVP3 A,@A in pages 1, 2, 3 and 5, over a 16-byte table each
+    mov r2,#10h
+m_loop:
+    mov a,r2
+    call pg1
+    mov a,r2
+    call pg2
+    mov a,r2
+    call pg3
+    mov a,r2
+    call pg5
+    inc r2
+    mov a,r2
+    add a,#0E0h             ; carry once r2 reaches $20
+    jnc m_loop
+
+; ---- JMPP @A through a table in the cartridge
+    mov r2,#8
+j_loop:
+    mov a,r2
+    call jtab
+    inc r2
+    mov a,r2
+    add a,#0F0h             ; carry once r2 reaches 16
+    jnc j_loop
+
+; ---- MOVP and JMPP on the last byte of a page use the NEXT page
+    mov a,#10h
+    jmp 1FFh                ; MOVP A,@A at $1FF reads $210; $200 jumps back
+back_1:
+    mov r3,a
+    mov a,#40h
+    jmp 2FFh                ; JMPP @A at $2FF reads $340 and jumps into page 3
+back_3:
+    jmp finish
+
+    org 110h
+    db 10h,11h,12h,13h,14h,15h,16h,17h,18h,19h,1Ah,1Bh,1Ch,1Dh,1Eh,1Fh
+    org 130h
+pg1:
+    movp a,@a
+    ret
+    org 1FFh
+    movp a,@a               ; the last byte of page 1: A indexes page 2
+    jmp back_1              ; $200
+    org 210h
+    db 20h,21h,22h,23h,24h,25h,26h,27h,28h,29h,2Ah,2Bh,2Ch,2Dh,2Eh,2Fh
+    org 230h
+pg2:
+    movp a,@a
+    ret
+    org 2FFh
+    jmpp @a                 ; the last byte of page 2: the table is in page 3
+    org 310h
+    db 30h,31h,32h,33h,34h,35h,36h,37h,38h,39h,3Ah,3Bh,3Ch,3Dh,3Eh,3Fh
+    org 340h
+    db 50h                  ; the JMPP's entry: the target is $350
+    org 350h
+    jmp back_3
+    org 360h
+pg3:
+    movp3 a,@a              ; page 3, wherever the PC is
+    ret
+
+    org 3D0h
+xint:
+    retr
+tint:
+    retr
+    include "common_end.inc"
+
+; ---- the cartridge: a MOVP table in page 5, a JMPP table in page 6
+    org 510h
+    db 50h,51h,52h,53h,54h,55h,56h,57h,58h,59h,5Ah,5Bh,5Ch,5Dh,5Eh,5Fh
+    org 520h
+pg5:
+    movp a,@a
+    ret
+    org 600h
+jtab:
+    jmpp @a                 ; jumps within page 6: the entry is at $600 + A
+    org 608h
+    db 10h,12h,14h,16h,18h,1Ah,1Ch,1Eh
+    org 610h
+    inc r5
+    ret
+    org 612h
+    inc r5
+    inc r5
+    ret
+    org 614h
+    mov a,#6
+    ret
+    org 616h
+    mov a,#7
+    ret
+    org 618h
+    clr a
+    ret
+    org 61Ah
+    cpl a
+    ret
+    org 61Ch
+    inc a
+    ret
+    org 61Eh
+    dec a
+    ret
