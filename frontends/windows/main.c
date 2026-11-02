@@ -895,19 +895,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         else
             later = media;
     }
-    if (o2session_start(g_session, &opts) != 0) {
-        const char *err = o2session_last_error(g_session);
-        if (opts.cart_path && import_would_fix(err)) {
-            /* a game with no BIOS: CONFIG boots, and the cartridge is offered
-             * again once the ROMs are in */
-            opts.cart_path = NULL;
-            later = media;
-            if (o2session_start(g_session, &opts) != 0)
-                o2_message(g_hwnd, o2session_last_error(g_session), APP_TITLE, MB_ICONWARNING | MB_OK);
-        } else {
-            o2_message(g_hwnd, err, APP_TITLE, MB_ICONWARNING | MB_OK);
-        }
-    }
+    if (o2session_start(g_session, &opts) != 0)
+        o2_message(g_hwnd, o2session_last_error(g_session), APP_TITLE, MB_ICONWARNING | MB_OK);
+    else if (opts.cart_path && !*o2session_cart_path(g_session))
+        later = media;      /* the session booted CONFIG instead: say why, and offer the import */
     if (later) load_media(later);
 
     g_pad_generation = o2session_gamepad_generation(g_session);

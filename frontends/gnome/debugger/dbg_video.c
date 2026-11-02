@@ -465,11 +465,11 @@ static void refresh_objects(DbgVideo *v)
     for (i = 0; i < 4; i++) {
         const i8244_sprite_info *p = &s->sprites[i];
         g_snprintf(text, sizeof text,
-            "S%d  x=%-3d y=%-3d  %-6s  zoom %dx  S=%d X9=%d  %s%s\n"
-            "    shape %02X %02X %02X %02X %02X %02X %02X %02X",
-            i, p->x, p->y, i8244_colour_name(p->color), p->zoom ? 2 : 1, p->s, p->x9,
+            "S%d  x=%-3d y=%-3d  %-6s  zoom %dx  %s%s\n"
+            "    S=%d X9=%d  shape %02X %02X %02X %02X %02X %02X %02X %02X",
+            i, p->x, p->y, i8244_colour_name(p->color), p->zoom ? 2 : 1,
             vis_name(p->visible, p->clipped), s->fg_en ? "" : "  (foreground off)",
-            p->shape[0], p->shape[1], p->shape[2], p->shape[3],
+            p->s, p->x9, p->shape[0], p->shape[1], p->shape[2], p->shape[3],
             p->shape[4], p->shape[5], p->shape[6], p->shape[7]);
         gtk_label_set_text(GTK_LABEL(v->spr[i].label), text);
         {
@@ -482,11 +482,12 @@ static void refresh_objects(DbgVideo *v)
     for (i = 0; i < 12; i++) {
         const i8244_char_info *c = &s->singles[i];
         g_snprintf(text, sizeof text,
-            "C%-2d x=%-3d y=%-3d  ptr $%02X  glyph %-2d  %-6s  bit8 %d  %s\n"
-            "    first row %d, %d rows drawn%s",
+            "C%-2d x=%-3d y=%-3d  ptr $%02X  glyph %-2d  %-6s  bit8 %d\n"
+            "    first row %d, %d rows  %s%s",
             i, c->x, c->y, c->reg_ptr, c->glyph, i8244_colour_name(c->color), c->bit8,
+            c->first_row, c->rows,
             c->ntsc_hidden ? "hidden (NTSC: y < 14)" : vis_name(c->visible, c->clipped),
-            c->first_row, c->rows, s->fg_en ? "" : "   (foreground off)");
+            s->fg_en ? "" : "  (foreground off)");
         gtk_label_set_text(GTK_LABEL(v->single[i].label), text);
         {
             uint8_t sig[4] = { c->reg_y, c->reg_x, c->reg_ptr, c->reg_color };

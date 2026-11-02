@@ -11,9 +11,14 @@
  *
  *     i8244_test                    the whole suite
  *     i8244_test --replay LOG [--frames DUMP --from N] [--pal] [--font F|test]
+ *                [--access-lag PX] [--lag N] [--lum-lead PX]
  *                                   replay a tools/ab/vdc_log.lua log against
  *                                   the C chip, comparing against MAME's
- *                                   frame dump pixel for pixel (a dev tool)
+ *                                   frame dump pixel for pixel and every value
+ *                                   the program read (a dev tool: see
+ *                                   tools/ab/real_carts.py; --access-lag 20 is
+ *                                   MAME's event ordering, --lag -1 because
+ *                                   MAME's pixels() shows the previous frame)
  *
  * Copyright (C) 2026 Thomas Cherryhomes
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -654,9 +659,19 @@ static void test_sound_mix(void)
         if (a[i] != 0.0f)
             ok = 0;
     check(ok, "sound disabled: silence");
+
+    /* nobody mixing: the event list is bounded and the newest changes survive */
+    i8244_init(&v, 0, g_font);
+    i8244_write(&v, 10, 0xa7, 0xff);
+    i8244_write(&v, 20, 0xa8, 0xff);
+    i8244_write(&v, 30, 0xa9, 0xff);
+    for (int k = 0; k < 6000; k++)
+        i8244_write(&v, 100 + 40u * (uint64_t)k, 0xaa, (k & 1) ? 0x8f : 0x83);
+    check(v.snd_count <= I8244_SND_EVENTS, "sound event list is bounded");
+    i8244_sound_mix(&v, 100 + 40u * 5990u, 100 + 40u * 6000u, a, 10);
+    check(a[0] > 0.0f && a[5] > 0.0f, "... and the newest changes are still mixed after an overflow");
 }
 
-static i8244_t *g_cx_chip;
 static int g_cx_x;
 static void cx_line(void *u, i8244_t *v, int y, int x0, int x1)
 {
@@ -675,7 +690,6 @@ static void test_cx_and_line_callback(void)
     uint8_t d;
 
     i8244_init(&v, 0, g_font);
-    g_cx_chip = &v;
     i8244_set_irq_callback(&v, irq_cb, NULL);
     i8244_set_line_callback(&v, cx_line, NULL);
     /* a sprite crossing line 100 at pixel 100.. */

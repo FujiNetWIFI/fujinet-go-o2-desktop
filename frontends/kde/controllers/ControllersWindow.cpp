@@ -434,9 +434,16 @@ private:
             drawFitted(p, in, bindingText(m_session, c.target), scaledFont(font(), 0.7, true));
             return;
         }
-        const bool word = label.size() > 2 && c.cap.kind != O2_KEYCAP_NORMAL;
-        drawFitted(p, in.adjusted(0, m_keyNames ? -3 : 0, 0, 0), label,
-                   scaledFont(font(), word || label.size() > 3 ? 0.78 : 1.15, true));
+        if (reset) {
+            /* the console's reset key carries a triangle, not a name */
+            const QPointF c0 = in.center() + QPointF(0, m_keyNames ? -3 : 0);
+            p.setPen(QPen(Qt::white, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(Qt::NoBrush);
+            p.drawPolygon(QPolygonF({ c0 + QPointF(0, -7), c0 + QPointF(-8, 6), c0 + QPointF(8, 6) }));
+        } else {
+            drawFitted(p, in.adjusted(0, m_keyNames ? -3 : 0, 0, 0), label,
+                       scaledFont(font(), label.size() > 1 ? 0.78 : 1.15, true));
+        }
         if (m_keyNames) {
             const QString name = keyName(m_session, c.target);
             if (!name.isEmpty()) {
@@ -753,6 +760,7 @@ ControllersWindow::ControllersWindow(o2session *session, QWidget *parent)
     maprow->addWidget(m_mapButton);
     maprow->addWidget(defaults);
     maprow->addWidget(m_keyNames);
+    maprow->addStretch(1);
     root->addLayout(maprow);
     m_hint = new ElidedLabel(true, 2);
     root->addWidget(m_hint);

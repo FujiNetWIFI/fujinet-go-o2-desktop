@@ -142,7 +142,7 @@ PrefsDialog::PrefsDialog(QWidget *parent, o2session *session)
     : QDialog(parent), m_s(session), m_start(restartState(session))
 {
     setWindowTitle(QStringLiteral("Preferences"));
-    resize(660, 560);
+    resize(660, 600);
     auto *outer = new QVBoxLayout(this);
     auto *tabs = new QTabWidget;
     tabs->addTab(scrolled(machinePage()), QStringLiteral("Machine"));

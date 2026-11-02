@@ -350,6 +350,10 @@ void o2_machine_init(o2_machine_t *m, const o2_machine_opts_t *opts)
 
     i8244_init(&m->vdc, m->is_pal, opts->font);
     i8244_set_irq_callback(&m->vdc, vdc_irq, m);
+    /* MAME fires a chip's timer only after the instruction that runs past it:
+     * one machine cycle of lag, which decides the $A1 status bits and the
+     * interrupt's arrival to the cycle (i8244.h) */
+    i8244_set_access_lag(&m->vdc, m->cycle_clocks);
 
     memset(&bus, 0, sizeof bus);
     bus.user = m;

@@ -463,7 +463,8 @@ QWidget *VideoTab::buildControl()
     auto *v = new QVBoxLayout(w);
     m_ctlText = dbgui::monoView();
     v->addWidget(m_ctlText, 1);
-    v->addWidget(dbgui::titleLabel(QStringLiteral("Collision register $A2: the mask the program set, and what has latched")));
+    v->addWidget(dbgui::titleLabel(QStringLiteral("Collision register $A2")));
+    v->addWidget(dbgui::dimLabel(QStringLiteral("The mask the program set, and what has latched.")));
     m_collision = new BitsWidget({ QStringLiteral("S0"), QStringLiteral("S1"), QStringLiteral("S2"),
                                    QStringLiteral("S3"), QStringLiteral("V grid"), QStringLiteral("H grid"),
                                    QStringLiteral("CX"), QStringLiteral("Chars") },
@@ -479,10 +480,10 @@ QWidget *VideoTab::buildSound()
 {
     auto *w = new QWidget;
     auto *v = new QVBoxLayout(w);
-    v->addWidget(dbgui::titleLabel(QStringLiteral("The sound shift register $A7-$A9 (bit 23 left)")));
+    v->addWidget(dbgui::titleLabel(QStringLiteral("The sound shift register, $A7-$A9")));
     QStringList bits;
     for (int i = 23; i >= 0; --i) bits << QString::number(i);
-    m_shift = new BitsWidget(bits, { QStringLiteral("shift") }, 22, true);
+    m_shift = new BitsWidget(bits, { QStringLiteral("bits") }, 27, true);
     v->addWidget(m_shift);
     m_soundText = dbgui::monoView();
     v->addWidget(m_soundText, 1);
@@ -493,16 +494,18 @@ QWidget *VideoTab::buildSheets()
 {
     auto *content = new QWidget;
     auto *v = new QVBoxLayout(content);
-    auto section = [&](const QString &title, QLabel *&label) {
+    auto section = [&](const QString &title, QLabel *&label, const QString &note) {
         v->addWidget(dbgui::titleLabel(title));
+        v->addWidget(dbgui::dimLabel(note));
         label = new QLabel;
         label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         v->addWidget(label);
     };
-    section(QStringLiteral("Font: the 512-byte character set as 64 glyphs (top two rows: colour bit 0 = 0; "
-                           "bottom two: bit 0 = 1)"), m_fontSheet);
-    section(QStringLiteral("Sprite shapes: the four shape tables, in their colours"), m_shapeSheet);
-    section(QStringLiteral("Palette: eight colours dim over eight bright"), m_paletteSheet);
+    section(QStringLiteral("Font: 64 glyphs"), m_fontSheet,
+            QStringLiteral("The 512-byte character set. The top two rows are the glyphs colour bit 0 = 0 "
+                           "selects, the bottom two those bit 0 = 1 does."));
+    section(QStringLiteral("Sprite shapes"), m_shapeSheet, QStringLiteral("The four shape tables, in their colours."));
+    section(QStringLiteral("Palette"), m_paletteSheet, QStringLiteral("Eight colours, dim over bright."));
     v->addStretch();
     auto *scroll = new QScrollArea;
     scroll->setWidget(content);
@@ -568,7 +571,8 @@ QPixmap VideoTab::objectPixmap(int kind, int index, int scale)
     if (!o2debug_vdc_object(m_dbg, kind, index, scale, 0xFF202020u, m_px.data(), m_px.size(), &w, &h) || w <= 0 || h <= 0)
         return QPixmap();
     const QImage img(reinterpret_cast<const uchar *>(m_px.data()), w, h, w * 4, QImage::Format_RGB32);
-    return QPixmap::fromImage(img);   /* copies */
+    /* copied: the image only wraps the buffer the next call overwrites */
+    return QPixmap::fromImage(img.copy());
 }
 
 /* A sheet view scaled up by a whole number to fit maxWidth. */
@@ -599,6 +603,13 @@ static QString stateText(int visible, int clipped, int ntscHidden)
     return clipped ? QStringLiteral("clipped") : QStringLiteral("visible");
 }
 
+/* A table as wide as its columns, so the section scrolls sideways when the
+ * window is narrow instead of cutting the last columns off. */
+static void fitWidth(QTableWidget *t)
+{
+    t->setMinimumWidth(t->horizontalHeader()->length() + 2 * t->frameWidth() + 2);
+}
+
 void VideoTab::refreshObjects()
 {
     for (int i = 0; i < 4; ++i) {
@@ -610,7 +621,7 @@ void VideoTab::refreshObjects()
         setCell(m_sprites, i, 2, QString::number(s.x));
         setCell(m_sprites, i, 3, QString::number(s.y));
         setColourCell(m_sprites, i, 4, s.color, m_pal);
-        setCell(m_sprites, i, 5, s.zoom ? QStringLiteral("4 px/bit") : QStringLiteral("2 px/bit"));
+        setCell(m_sprites, i, 5, s.zoom ? QStringLiteral("4 px") : QStringLiteral("2 px"));
         setCell(m_sprites, i, 6, QString::number(s.s));
         setCell(m_sprites, i, 7, QString::number(s.x9));
         setCell(m_sprites, i, 8, shapeText(s.shape));
@@ -633,6 +644,9 @@ void VideoTab::refreshObjects()
     for (int q = 0; q < 4; ++q)
         for (int j = 0; j < 4; ++j)
             fillChars(m_quads, q * 4 + j, QStringLiteral("%1.%2").arg(q).arg(j), m_snap.quads[q].chars[j], 2, q * 4 + j);
+    fitWidth(m_sprites);
+    fitWidth(m_singles);
+    fitWidth(m_quads);
 }
 
 void VideoTab::refreshGrid()
@@ -640,26 +654,25 @@ void VideoTab::refreshGrid()
     const i8244_snapshot &s = m_snap;
     m_gridDiagram->set(s, fromXrgb(m_pal[(s.grid_lum ? 8 : 0) + (s.grid_color & 7)]));
     QString t;
-    t += QStringLiteral("Grid          %1 ($A0 bit 3)\n").arg(s.grid_en ? "on" : "off");
-    t += QStringLiteral("Dots          %1 ($A0 bit 6)\n").arg(s.dots_en ? "on" : "off");
-    t += QStringLiteral("Fill          %1 ($A0 bit 7: vertical lines a whole cell wide)\n").arg(s.fill ? "on" : "off");
-    t += QStringLiteral("Colour        %1%2\n").arg(colourText(s.grid_color), s.grid_lum ? QStringLiteral(" (bright)") : QString());
-    t += QStringLiteral("Origin        x %1 (x2 pixels), y %2; cells %3 x %4 pixels\n\n")
-             .arg(s.grid_x0).arg(s.grid_y0).arg(s.cell_w).arg(s.cell_h);
-    t += QStringLiteral("Horizontal lines ($C0-$D8: 9 columns, a line y of each in a bit)\n");
+    t += QStringLiteral("Grid     %1 ($A0 b3)\n").arg(s.grid_en ? "on" : "off");
+    t += QStringLiteral("Dots     %1 ($A0 b6)\n").arg(s.dots_en ? "on" : "off");
+    t += QStringLiteral("Fill     %1 ($A0 b7)\n").arg(s.fill ? "on" : "off");
+    t += QStringLiteral("Colour   %1%2\n").arg(colourText(s.grid_color), s.grid_lum ? QStringLiteral(", bright") : QString());
+    t += QStringLiteral("Origin   x %1 (x2 px), y %2\n").arg(s.grid_x0).arg(s.grid_y0);
+    t += QStringLiteral("Cells    %1 x %2 px\n").arg(s.cell_w).arg(s.cell_h);
+    t += QStringLiteral("Lockout  %1\n\n").arg(s.lock_grid ? "locked: reads 0, writes ignored" : "open");
+    t += QStringLiteral("Horizontal lines, $C0-$D8\n(a bit a line, 9 each)\n");
     for (int i = 0; i < 9; ++i) {
         QString bits;
         for (int y = 0; y < 9; ++y) bits += (s.hgrid[i] >> y) & 1 ? QLatin1Char('#') : QLatin1Char('.');
         t += QStringLiteral("  col %1  %2  $%3\n").arg(i).arg(bits, hx(s.hgrid[i], 3));
     }
-    t += QStringLiteral("\nVertical lines ($E0-$E9: 10 positions, a row y of each in a bit)\n");
+    t += QStringLiteral("\nVertical lines, $E0-$E9\n(a bit a row, 8 each)\n");
     for (int i = 0; i < 10; ++i) {
         QString bits;
         for (int y = 0; y < 8; ++y) bits += (s.vgrid[i] >> y) & 1 ? QLatin1Char('#') : QLatin1Char('.');
         t += QStringLiteral("  pos %1  %2  $%3\n").arg(i).arg(bits, hx(s.vgrid[i], 2));
     }
-    t += QStringLiteral("\nWrite lockout: the grid registers read 0 and ignore writes while the grid is on: %1\n")
-             .arg(s.lock_grid ? "locked now" : "open");
     dbgui::setText(m_gridText, t);
 }
 
@@ -685,6 +698,7 @@ void VideoTab::refreshRegisters()
             }
         }
         setCell(m_regs, off, 3, QString::fromUtf8(text));
+        m_regs->item(off, 3)->setToolTip(QString::fromUtf8(text));
     }
     m_regsFilling = false;
 }
@@ -754,9 +768,9 @@ void VideoTab::refreshSound()
 
 void VideoTab::refreshSheets()
 {
-    m_fontSheet->setPixmap(viewPixmap(O2DEBUG_VDC_FONT, 520));
-    m_shapeSheet->setPixmap(viewPixmap(O2DEBUG_VDC_SHAPES, 520));
-    m_paletteSheet->setPixmap(viewPixmap(O2DEBUG_VDC_PALETTE, 260));
+    m_fontSheet->setPixmap(viewPixmap(O2DEBUG_VDC_FONT, 560));
+    m_shapeSheet->setPixmap(viewPixmap(O2DEBUG_VDC_SHAPES, 560));
+    m_paletteSheet->setPixmap(viewPixmap(O2DEBUG_VDC_PALETTE, 280));
 }
 
 /* ---- under the pointer ------------------------------------------------------------------------- */

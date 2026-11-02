@@ -26,6 +26,7 @@ add_executable(fujinet-go-o2-windows WIN32
   prefs.c
   controllers/controllers_window.c
   debugger/dbg_window.c
+  debugger/dbg_views.c
   resource.rc
 )
 target_include_directories(fujinet-go-o2-windows PRIVATE

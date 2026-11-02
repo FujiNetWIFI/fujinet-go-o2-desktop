@@ -227,7 +227,7 @@ void EfTab::refresh()
     static std::vector<uint32_t> px(EF9340_LAYER_STRIDE * EF9340_LAYER_ROWS);
     if (o2debug_ef_view(m_dbg, px.data(), px.size(), &w, &hgt) && w > 0 && hgt > 0) {
         const QImage img(reinterpret_cast<const uchar *>(px.data()), w, hgt, w * 4, QImage::Format_RGB32);
-        m_layer->setPixmap(QPixmap::fromImage(img));
+        m_layer->setPixmap(QPixmap::fromImage(img.copy()));
     }
     m_page->set(s);
     m_note->setText(QStringLiteral("Graphics cells ▚, delimiters ·, extended glyphs ▣. The cursor is outlined. "
@@ -428,7 +428,7 @@ CartTab::CartTab(o2debug *debugger, QWidget *parent) : QWidget(parent), m_dbg(de
     auto *right = new QVBoxLayout;
     right->addWidget(dbgui::titleLabel(QStringLiteral("The cartridge's mailbox page, $F20-$FFF")));
     m_mailbox = dbgui::monoView();
-    m_mailbox->setMinimumWidth(m_mailbox->fontMetrics().horizontalAdvance(QString(70, QLatin1Char('0'))));
+    m_mailbox->setMinimumWidth(m_mailbox->fontMetrics().horizontalAdvance(QString(80, QLatin1Char('0'))));
     right->addWidget(m_mailbox, 1);
     h->addLayout(right);
 }

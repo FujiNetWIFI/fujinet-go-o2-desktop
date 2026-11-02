@@ -1226,8 +1226,8 @@ static void on_bp_type_changed(GObject *o, GParamSpec *ps, gpointer ud)
     guint sel = gtk_drop_down_get_selected(w->bp_type);
     gboolean port = sel >= 4, exec = sel == 0;
     (void)o; (void)ps;
-    gtk_widget_set_sensitive(GTK_WIDGET(w->bp_space), !exec && !port);
-    gtk_widget_set_sensitive(GTK_WIDGET(w->bp_port), port);
+    gtk_widget_set_visible(GTK_WIDGET(w->bp_space), !exec && !port);
+    gtk_widget_set_visible(GTK_WIDGET(w->bp_port), port);
     gtk_widget_set_sensitive(GTK_WIDGET(w->bp_start), !port);
     gtk_widget_set_sensitive(GTK_WIDGET(w->bp_end), !port);
 }
@@ -1716,7 +1716,13 @@ static GtkWidget *build_io(DbgWin *w)
 
     w->io.kbd_row = -1;
     w->io.machine = O2_MACHINE_ODYSSEY2;
-    gtk_box_append(GTK_BOX(box), dbg_mono_view(&w->io_text, FALSE));
+    {
+        GtkWidget *text = dbg_mono_view(&w->io_text, FALSE);
+        gtk_text_view_set_wrap_mode(w->io_text, GTK_WRAP_WORD_CHAR);
+        gtk_widget_set_size_request(text, 440, -1);
+        gtk_widget_set_hexpand(text, FALSE);
+        gtk_box_append(GTK_BOX(box), text);
+    }
     gtk_box_append(GTK_BOX(right), dbg_heading("Keyboard matrix (row = P20-P22, column = bit)"));
     gtk_box_append(GTK_BOX(right), w->matrix_area);
     gtk_box_append(GTK_BOX(right), dbg_hint("Held keys are filled; the row P2 selects is "
@@ -1792,11 +1798,15 @@ static GtkWidget *build_cart(DbgWin *w)
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkWidget *mbox = dbg_mono_view(&w->mbox_text, FALSE);
+    GtkWidget *text = dbg_mono_view(&w->cart_text, FALSE);
 
+    gtk_text_view_set_wrap_mode(w->cart_text, GTK_WRAP_WORD_CHAR);
+    gtk_widget_set_size_request(text, 480, -1);
+    gtk_widget_set_hexpand(text, FALSE);
     gtk_widget_set_size_request(mbox, 420, -1);
     gtk_box_append(GTK_BOX(right), dbg_heading("Mailbox page ($F20-$FFF) as the console reads it"));
     gtk_box_append(GTK_BOX(right), mbox);
-    gtk_box_append(GTK_BOX(box), dbg_mono_view(&w->cart_text, FALSE));
+    gtk_box_append(GTK_BOX(box), text);
     gtk_box_append(GTK_BOX(box), right);
     return dbg_padded(box);
 }

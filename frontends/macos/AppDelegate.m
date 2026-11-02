@@ -10,6 +10,7 @@
 
 #import "AppDelegate.h"
 
+#import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "DisplayView.h"

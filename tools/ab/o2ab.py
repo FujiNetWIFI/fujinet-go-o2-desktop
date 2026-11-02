@@ -51,7 +51,7 @@ def run_mame(cart, lua, env, seconds, romdir, machine="odyssey2", wav=None,
     """Run MAME headless for `seconds` of emulated time, hard-killed after
     `timeout` wall seconds.  Returns the exit status."""
     cmd = [MAME, "-rompath", romdir,
-           machine, "-cart", cart, "-video", "none", "-sound", "none" if wav is None else "none",
+           machine, "-cart", cart, "-video", "none", "-sound", "none",
            "-seconds_to_run", str(seconds), "-nothrottle", "-skip_gameinfo",
            "-autoboot_script", lua]
     if wav:
@@ -60,8 +60,6 @@ def run_mame(cart, lua, env, seconds, romdir, machine="odyssey2", wav=None,
     cmd += list(extra)
     e = dict(os.environ)
     e.update({k: str(v) for k, v in env.items()})
-    # MAME writes its cfg/nvram/ini into the cwd: keep that in the work dir
-    cwd = os.path.dirname(os.path.abspath(lua)) if False else None
     logf = open(log, "wb") if log else subprocess.DEVNULL
     p = subprocess.Popen(cmd, env=e, stdout=logf, stderr=subprocess.STDOUT,
                          start_new_session=True)

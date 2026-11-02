@@ -44,8 +44,7 @@ static void text_at(HDC dc, int x, int y, const char *utf8, int n)
     wchar_t w[512];
     char tmp[512];
     if (n < 0 || n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
-    memcpy(tmp, utf8, (size_t)n);
-    tmp[n] = '\0';
+    snprintf(tmp, sizeof tmp, "%.*s", n, utf8);
     dbg_wide_from(tmp, w, 512);
     TextOutW(dc, x, y, w, (int)wcslen(w));
 }

@@ -186,6 +186,13 @@ static CVReturn displayCallback(CVDisplayLinkRef link, const CVTimeStamp *now,
     [self positionPicture];
 }
 
+/* AppKit does not promise setFrame: goes through setFrameSize:. */
+- (void)setFrame:(NSRect)frame
+{
+    [super setFrame:frame];
+    [self positionPicture];
+}
+
 - (void)setTvAspect:(BOOL)tv
 {
     _tv = tv;
@@ -318,9 +325,12 @@ static CVReturn displayCallback(CVDisplayLinkRef link, const CVTimeStamp *now,
  * and frees it for reuse when the image's last owner lets go. */
 - (CGImageRef)newImageFor:(O2FrameBuffer *)buf
 {
-    CGDataProviderRef dp = CGDataProviderCreateWithData((void *)CFBridgingRetain(buf), [buf pixels],
-                                                        FRAME_BYTES, releaseFrame);
-    if (!dp) return NULL;
+    void *info = (void *)CFBridgingRetain(buf);
+    CGDataProviderRef dp = CGDataProviderCreateWithData(info, [buf pixels], FRAME_BYTES, releaseFrame);
+    if (!dp) {
+        CFRelease(info);     /* the caller frees the buffer's slot */
+        return NULL;
+    }
     /* The session's pixels are 0x00RRGGBB in host order: a little-endian
      * 32-bit image with the alpha byte skipped reads them as they are. */
     CGImageRef img = CGImageCreate(O2SESSION_FB_WIDTH, O2SESSION_FB_HEIGHT, 8, 32,

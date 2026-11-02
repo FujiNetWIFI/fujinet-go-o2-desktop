@@ -103,7 +103,7 @@ DebuggerWindow::DebuggerWindow(o2session *session, QWidget *parent)
     : QMainWindow(parent, Qt::Window), m_session(session), m_dbg(o2debug_get(session))
 {
     setWindowTitle(QStringLiteral("Debugger"));
-    resize(1320, 880);
+    resize(1400, 900);
 
     auto *central = new QWidget;
     auto *root = new QVBoxLayout(central);
@@ -292,8 +292,10 @@ QTableWidget *DebuggerWindow::hexTable(int space, int size)
     t->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     t->verticalHeader()->setDefaultSectionSize(ch);
     t->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    t->setFixedSize(t->verticalHeader()->sizeHint().width() + 16 * cw + 4,
-                    t->horizontalHeader()->sizeHint().height() + rows * ch + 4);
+    const int vw = fm.horizontalAdvance(QStringLiteral("$00")) + 20;
+    t->verticalHeader()->setFixedWidth(vw);
+    t->setFixedSize(vw + 16 * cw + 2 * t->frameWidth() + 2,
+                    t->horizontalHeader()->sizeHint().height() + rows * ch + 2 * t->frameWidth() + 2);
     t->setSelectionMode(QAbstractItemView::SingleSelection);
     t->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     t->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -829,7 +831,9 @@ void DebuggerWindow::refreshStatus()
     int addr;
     const bool stopped = o2debug_is_stopped(m_dbg) != 0;
     o2debug_stop_reason(m_dbg, reason, sizeof reason, &addr);
-    m_status->setText(stopped ? QStringLiteral("Stopped%1%2").arg(reason[0] ? ": " : "", QString::fromUtf8(reason))
+    /* the engine says "stopped" when nothing more can be said */
+    const bool why = reason[0] && strcmp(reason, "stopped") != 0;
+    m_status->setText(stopped ? QStringLiteral("Stopped%1%2").arg(why ? ": " : "", why ? QString::fromUtf8(reason) : QString())
                               : QStringLiteral("Running"));
     m_runBtn->setText(stopped ? QStringLiteral("Run (F5)") : QStringLiteral("Stop (F5)"));
     m_runBtn->setStyleSheet(stopped ? o2AccentFill() : QString());

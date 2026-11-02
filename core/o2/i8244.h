@@ -23,7 +23,10 @@
  * line 0 is 20 lines later.  A line is 455 (NTSC) / 456 (PAL) pixel clocks,
  * a frame 263 / 313 lines.
  *
- * MAME QUIRK TO KNOW ABOUT (A/B against MAME only): MAME's 8048 runs 1.4 ppm
+ * TWO MAME QUIRKS TO KNOW ABOUT (A/B against MAME only; the real console has
+ * neither):
+ *
+ * (1) the CPU clock. MAME's 8048 runs 1.4 ppm
  * faster than 20 (18) pixel clocks a machine cycle -- its XTAL class rounds
  * 7.15909 MHz up to 7.1591 MHz for the CPU (5,369,325 Hz, PAL 5,911,500 Hz)
  * but leaves the screen at 7,159,090 Hz (7,093,790 Hz).  A cycle is 19.999972
@@ -33,6 +36,10 @@
  * i8244_test.c's cyc_to_px() uses MAME's ratio only to reproduce MAME's access
  * times in its goldens.  Raster effects placed to the cycle will sit a few
  * pixels apart from MAME's after a few hundred frames.
+ *
+ * (2) event ordering: see i8244_set_access_lag().  Call it once with one
+ * machine cycle (20 NTSC, 18 PAL pixel clocks) to match MAME to the pixel and
+ * to every status bit it returns; leave it 0 for the exact hardware order.
  *
  * The chip does NO per-clock work.  Its events (hblank every line, vblank
  * once a frame, the screen's frame start/end) are absolute times kept inside;
@@ -48,7 +55,8 @@
  *     cycles BEFORE doing its work, so a MOVX sees the time at the END of the
  *     instruction (start + its cycle count).  Pass that.
  *   - Every entry point calls i8244_run_until(now) first (events due at or
- *     before `now` happen before the access).  The glue only has to call
+ *     before `now` happen before the access; see i8244_set_access_lag() for
+ *     MAME's one-cycle exception).  The glue only has to call
  *     i8244_run_until(cpu_now) itself before it tests i8244_irq() at an
  *     instruction boundary, and to keep the CPU from running past
  *     i8244_next_event() without doing so (or simply run_until every
@@ -88,7 +96,9 @@
  * frame the glue calls i8244_run_until(frame_end) and then
  * i8244_sound_mix(v, t0, t1, out, n): n mono floats box-averaged over
  * [t0, t1), already scaled like MAME's final output (see I8244_SOUND_GAIN),
- * consumed events pruned.
+ * consumed events pruned.  (MAME's own 48 kHz audio comes out ~3.5 samples
+ * later than the chip's edges -- its resampler's delay -- which the sound goldens
+ * allow for; nothing to do on your side.)
  *
  * FONT.  The 512-byte character generator (MAME charset_i8244.bin) is NOT
  * built in.  i8244_init()/i8244_set_font() take a pointer (kept, not copied);

@@ -1000,7 +1000,7 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
 - (void)writeRam:(id)sender
 {
     (void)sender;
-    long a, v;
+    long a = 0, v = 0;
     const BOOL internal = _ramSpace.indexOfSelectedItem == 0;
     if (!parseNum(_ramAddr.stringValue, &a) || !parseNum(_ramVal.stringValue, &v) || a < 0 ||
         a > (internal ? 0x3f : 0x7f)) {

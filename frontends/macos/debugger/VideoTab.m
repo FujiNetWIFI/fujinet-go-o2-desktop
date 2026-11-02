@@ -732,7 +732,7 @@ static const char *charState(const i8244_char_info *c)
 - (void)writeRegister:(id)sender
 {
     (void)sender;
-    long off, val;
+    long off = 0, val = 0;
     if (!o2debug_is_stopped(_dbg)) {
         _regNote.stringValue = @"Stop the machine (F5) to write a register";
         return;

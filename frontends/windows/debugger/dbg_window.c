@@ -319,13 +319,19 @@ static int image_reserve(image *im, size_t px)
 }
 
 /* One of the chip's views into im: asks for its size first, grows the buffer
- * to fit and draws. 0 (and an empty image) when the engine has none. */
+ * to fit and draws. An engine that does not answer the size query gets the
+ * biggest picture's room instead. 0 (and an empty image) when there is none. */
 static int fetch_view(debugger *d, image *im, int view, unsigned layers, unsigned flags, int scale)
 {
     int w = 0, h = 0;
     im->w = im->h = 0;
     o2debug_vdc_view(d->dbg, view, layers, flags, scale, NULL, 0, &w, &h);
-    if (w <= 0 || h <= 0 || !image_reserve(im, (size_t)w * (size_t)h)) return 0;
+    if (w > 0 && h > 0) {
+        if (!image_reserve(im, (size_t)w * (size_t)h)) return 0;
+    } else if (!image_reserve(im, O2DEBUG_VDC_VIEW_MAX_PIXELS)) {
+        return 0;
+    }
+    w = h = 0;
     if (!o2debug_vdc_view(d->dbg, view, layers, flags, scale, im->px, im->cap, &w, &h) || w <= 0 || h <= 0)
         return 0;
     im->w = w;
@@ -742,10 +748,12 @@ static void refresh_ef(debugger *d)
     view_set(d->ef_text, t);
     d->ef_pv.img.w = d->ef_pv.img.h = 0;
     o2debug_ef_view(d->dbg, NULL, 0, &w, &h);
-    if (w > 0 && h > 0 && image_reserve(&d->ef_pv.img, (size_t)w * (size_t)h) &&
-        o2debug_ef_view(d->dbg, d->ef_pv.img.px, d->ef_pv.img.cap, &w, &h) && w > 0 && h > 0) {
-        d->ef_pv.img.w = w;
-        d->ef_pv.img.h = h;
+    if (image_reserve(&d->ef_pv.img, w > 0 && h > 0 ? (size_t)w * (size_t)h : (size_t)EF9340_LAYER_STRIDE * EF9340_LAYER_ROWS)) {
+        w = h = 0;
+        if (o2debug_ef_view(d->dbg, d->ef_pv.img.px, d->ef_pv.img.cap, &w, &h) && w > 0 && h > 0) {
+            d->ef_pv.img.w = w;
+            d->ef_pv.img.h = h;
+        }
     }
     InvalidateRect(d->ef_grid, NULL, FALSE);
     InvalidateRect(d->ef_pic, NULL, FALSE);
