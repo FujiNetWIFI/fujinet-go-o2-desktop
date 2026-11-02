@@ -17,3 +17,8 @@ add_test(NAME stub_boot COMMAND stub_test)
 o2_test(cart_test cart_test.c)
 add_test(NAME cart COMMAND cart_test)
 set_tests_properties(cart PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+# The paced host: CONFIG paints, the machine keeps its own frame rate.
+o2_test(boot_smoke boot_smoke.c)
+add_test(NAME boot_smoke COMMAND boot_smoke)
+set_tests_properties(boot_smoke PROPERTIES TIMEOUT 60)

@@ -1,10 +1,10 @@
 /*
  * boot_smoke -- the paced host boots CONFIG and keeps real time.
  *
- * Starts the host thread (core/o2/host.h) on the stand-in, waits for
- * frames, and checks that CONFIG painted (MAME's visible area, 100x246, with
- * lit pixels on it) and that the frame rate is the machine's own -- 59.98 Hz
- * within 2%. The siblings' hardest-won lesson: verify the throttle (one once
+ * Starts the host thread (core/o2/host.h) on the stand-in with a generated
+ * character set, waits for frames, and checks that CONFIG painted (MAME's
+ * visible area, 360x243, with lit pixels on it) and that the frame rate is
+ * the machine's own -- 59.83 Hz within 2%. The siblings' hardest-won lesson: verify the throttle (one once
  * free-ran at >33000%).
  *
  * The rate is only held to 2% where the OS can sleep for a frame without
@@ -46,10 +46,20 @@ static void sleep_ms(int ms)
     nanosleep(&ts, NULL);
 }
 
+/* the generated test font: tools/ab/o2ab.py test_font() */
+static void make_font(uint8_t font[512])
+{
+    for (uint32_t i = 0; i < 512; i++)
+        font[i] = (uint8_t)((i * 2654435761u) >> 24);
+}
+
+static const double k_want_hz = I8244_NTSC_PIXEL_HZ / (double)(I8244_NTSC_HTOTAL * I8244_NTSC_VTOTAL);
+
 static void run(void)
 {
     static uint32_t fb[O2_FB_WIDTH * O2_FB_HEIGHT];
-    const double want_hz = O2_FRAME_HZ;
+    static uint8_t font[512];
+    const double want_hz = k_want_hz;
     o2_host_opts_t o;
     uint64_t serial = 0, f0, f1;
     int lit = 0;
@@ -57,6 +67,10 @@ static void run(void)
     char what[160];
 
     memset(&o, 0, sizeof o);
+    make_font(font);
+    o.machine = O2_MACHINE_ODYSSEY2;
+    o.font = font;
+    o.font_size = sizeof font;
     o.boip_hostport = "127.0.0.1:1";   /* no FujiNet: CONFIG runs link-down */
     if (o2_host_start(&o) != 0)
     {
@@ -112,22 +126,26 @@ static double capacity(void)
 {
     static o2_machine_t m;
     char why[160];
-    o2_cart_t *c = o2_cart_create();
+    o2_machine_opts_t mo;
+    o2_fujinet_t *fj = o2_fujinet_create();
     double t0, t1;
     const int frames = 120;
 
     /* the mailbox on its worker: inline, a link-down wait would stall the CPU */
-    o2_cart_power_on(c, NULL, 0, "127.0.0.1:1", false, why, sizeof why);
-    o2_machine_init(&m, NULL, 0, c, false);
+    o2_fujinet_power_on(fj, NULL, 0, "127.0.0.1:1", false, why, sizeof why);
+    memset(&mo, 0, sizeof mo);
+    mo.machine = O2_MACHINE_ODYSSEY2;
+    mo.cart = o2_fujinet_cart(fj);
+    mo.fujinet = fj;
+    o2_machine_init(&m, &mo);
     t0 = now_s();
     for (int f = 0; f < frames; f++)
     {
         o2_machine_run_frame(&m);
-        o2_machine_latch_inputs(&m);
         m.out_frames = 0;
     }
     t1 = now_s();
-    o2_cart_destroy(c);
+    o2_fujinet_destroy(fj);
     return frames / (t1 - t0);
 }
 
