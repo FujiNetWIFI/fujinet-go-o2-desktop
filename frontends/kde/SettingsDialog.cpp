@@ -12,6 +12,7 @@
  */
 
 #include "SettingsDialog.h"
+#include "help/HelpWindow.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -28,6 +29,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QSlider>
 #include <QTabWidget>
 #include <QTimer>
@@ -88,6 +90,9 @@ RestartState restartState(o2session *s)
              o2session_get_int(s, "enable_gamepad", 1),
              local(o2session_get_str(s, "fujinet_external_addr", "")) };
 }
+
+/* The Help topic of each page (o2help contexts), by tab index. */
+const char *const kPageContext[] = { "prefs/Machine", "prefs/ROMs", "prefs/Display", "prefs/Display", "prefs/Input", "prefs/FujiNet" };
 
 class PrefsDialog : public QDialog {
 public:
@@ -155,8 +160,18 @@ PrefsDialog::PrefsDialog(QWidget *parent, o2session *session)
     outer->addWidget(note(QStringLiteral("Changes apply as you make them; the machine, BIOS, Voice, audio, "
                                          "gamepad and FujiNet options take effect by power-cycling the console "
                                          "when this window closes.")));
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    /* Help, F1 and Ctrl+Shift+H (the app's shortcuts don't reach a modal
+     * dialog) open the page's own */
+    auto helpContext = [this, tabs] {
+        setProperty("o2HelpContext", QString::fromLatin1(kPageContext[tabs->currentIndex()]));
+    };
+    helpContext();
+    connect(tabs, &QTabWidget::currentChanged, this, helpContext);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close | QDialogButtonBox::Help);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::helpRequested, this, [this] { o2HelpFor(this); });
+    for (const char *key : { "F1", "Ctrl+Shift+H" })
+        new QShortcut(QKeySequence(QString::fromLatin1(key)), this, [this] { o2HelpFor(this); });
     outer->addWidget(buttons);
     refreshMachineNotes();
     refreshRoms();

@@ -42,6 +42,7 @@
 #import "ControllersWindow.h"
 
 #import "../KeyForward.h"
+#import "../help/HelpWindow.h"
 
 #include <math.h>
 #include <string.h>
@@ -375,6 +376,7 @@ static void drawFitted(NSString *text, NSRect r, CGFloat size, BOOL bold, NSColo
     NSButton *_mapButton;
     NSButton *_defaultsButton;
     NSButton *_showKeysBox;
+    NSButton *_helpButton;
     NSTextField *_hint;
     NSTimer *_timer;
     int _slow;
@@ -405,6 +407,7 @@ static void drawFitted(NSString *text, NSRect r, CGFloat size, BOOL bold, NSColo
                     backing:NSBackingStoreBuffered
                       defer:NO];
     [_panel setTitle:@"Controllers"];
+    O2SetHelpContext(_panel, @"controllers");
     /* Floats above the machine's window, a full-screen one too. */
     [_panel setLevel:NSFloatingWindowLevel];
     [_panel setCollectionBehavior:NSWindowCollectionBehaviorFullScreenAuxiliary];
@@ -459,6 +462,9 @@ static void drawFitted(NSString *text, NSRect r, CGFloat size, BOOL bold, NSColo
     [_showKeysBox setState:_console.showKeys ? NSControlStateValueOn : NSControlStateValueOff];
     [_showKeysBox setRefusesFirstResponder:YES];
     [_content addSubview:_showKeysBox];
+    _helpButton = O2HelpButton(@"controllers");
+    [_helpButton setRefusesFirstResponder:YES];
+    [_content addSubview:_helpButton];
     _hint = [NSTextField wrappingLabelWithString:@""];
     [_hint setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [_hint setTextColor:[NSColor secondaryLabelColor]];
@@ -604,6 +610,7 @@ static CGFloat snap(CGFloat v)
     [_mapButton setFrame:NSMakeRect(MARGIN, mapY, 76, BTN_H)];
     [_defaultsButton setFrame:NSMakeRect(MARGIN + 82, mapY, 96, BTN_H)];
     [_showKeysBox setFrame:NSMakeRect(MARGIN + 190, mapY + 3, 110, 22)];
+    [_helpButton setFrameOrigin:NSMakePoint(w - MARGIN - _helpButton.frame.size.width, mapY + 2)];
     [_hint setFrame:NSMakeRect(MARGIN, hintY, inner, 34)];
     [_console setNeedsDisplay:YES];
 }

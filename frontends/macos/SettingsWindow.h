@@ -22,7 +22,7 @@
 - (void)settingsClosed:(BOOL)needsRestart;
 @end
 
-@interface O2SettingsWindow : NSObject <NSWindowDelegate>
+@interface O2SettingsWindow : NSObject <NSWindowDelegate, NSTabViewDelegate>
 - (instancetype)initWithSession:(o2session *)session delegate:(id<O2SettingsDelegate>)delegate;
 - (void)show;
 /* The ROM list, the machine's ROM status and the Web UI line, from the session

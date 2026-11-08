@@ -1,0 +1,10 @@
+--- frontends/kde/MainWindow.cpp
++++ frontends/kde/MainWindow.cpp
+@@ -80,6 +91,7 @@ MainWindow::MainWindow(o2session *session, QWidget *parent)
+     : QMainWindow(parent), m_session(session)
+ {
+     setWindowTitle(QStringLiteral("FujiNet Go Odyssey 2"));
++    setProperty("o2HelpContext", QStringLiteral("main"));
+     /* 4:3 at 972 x 729, and the chrome */
+     resize(972, 729 + 60);
+     setAcceptDrops(true);

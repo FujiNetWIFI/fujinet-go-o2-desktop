@@ -23,6 +23,7 @@
 #import "DebugViews.h"
 #import "VideoTab.h"
 #import "../KeyForward.h"
+#import "../help/HelpWindow.h"
 
 #include <float.h>
 #include <math.h>
@@ -49,6 +50,12 @@
 #define TAB_CART        7
 #define TAB_FUJINET     8
 #define NUM_TABS        9
+
+/* The Help topic of each tab. */
+static NSString *const kTabContexts[NUM_TABS] = {
+    @"debugger/prompt", @"debugger/cpu", @"debugger/disassembly", @"debugger/video", @"debugger/ef9340",
+    @"debugger/io", @"debugger/breakpoints", @"debugger/cart", @"debugger/fujinet"
+};
 
 static O2DebuggerWindow *g_debugger;
 
@@ -467,7 +474,10 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
 - (void)tabView:(NSTabView *)tabView didSelectTabViewItem:(NSTabViewItem *)item
 {
     (void)tabView;
-    [self refreshTab:[_tabs indexOfTabViewItem:item]];
+    const NSInteger i = [_tabs indexOfTabViewItem:item];
+    /* The Help button and Command+? open the tab being shown. */
+    if (i >= 0 && i < NUM_TABS) O2SetHelpContext(_window, kTabContexts[i]);
+    [self refreshTab:i];
 }
 
 /* ---- construction -------------------------------------------------------------------- */
@@ -798,7 +808,9 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
     _status = O2Note(@"Running");
     _status.alignment = NSTextAlignmentRight;
     _status.lineBreakMode = NSLineBreakByTruncatingTail;
-    NSStackView *toolbar = O2HStack(@[_runBtn, step, over, outBtn, scan, frame, symbols, save, _status]);
+    NSButton *help = O2HelpButton(nil);
+    [help setRefusesFirstResponder:YES];
+    NSStackView *toolbar = O2HStack(@[_runBtn, step, over, outBtn, scan, frame, symbols, save, _status, help]);
     [_status setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     [_status setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                       forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -836,6 +848,10 @@ static void setButtonLit(NSButton *b, NSString *title, BOOL lit)
         if (t >= 0 && t < (int)_tabs.numberOfTabViewItems) [_tabs selectTabViewItemAtIndex:t];
     }
     _tabs.delegate = self;
+    {
+        const NSInteger i = _tabs.selectedTabViewItem ? [_tabs indexOfTabViewItem:_tabs.selectedTabViewItem] : 0;
+        O2SetHelpContext(_window, kTabContexts[i >= 0 && i < NUM_TABS ? i : 0]);
+    }
 
     NSStackView *root = O2VStack(@[toolbar, _tabs]);
     root.edgeInsets = NSEdgeInsetsMake(8, 8, 8, 8);

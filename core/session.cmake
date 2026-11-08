@@ -14,7 +14,8 @@ set(O2_SESSION_SOURCES
   src/bindings.c
   src/hid_keys.c
   src/gamepad_sdl.c
-  src/debug.c)
+  src/debug.c
+  src/help.c)
 
 # The embedded ROM table: empty unless WITH_O2_ROMS (see COMPLIANCE.md). With
 # it ON the developer's own images in tools/roms/ (the console BIOS, the
@@ -41,7 +42,21 @@ else()
     VERBATIM)
 endif()
 
-add_library(o2_session STATIC ${O2_SESSION_SOURCES} "${O2_ROMS_C}")
+# The Help, embedded: data/help/help.md as topics of styled spans
+# (core/include/o2help.h), which every frontend lays out with its own
+# toolkit. help_data.h declares the table; the build generates it.
+set(O2_HELP_C "${CMAKE_BINARY_DIR}/generated/help_content.c")
+add_custom_command(
+  OUTPUT "${O2_HELP_C}"
+  COMMAND "${Python3_EXECUTABLE}" -I "${CMAKE_SOURCE_DIR}/tools/help/make-help.py"
+          --src "${CMAKE_SOURCE_DIR}/data/help/help.md"
+          --out-c "${O2_HELP_C}"
+  DEPENDS "${CMAKE_SOURCE_DIR}/tools/help/make-help.py"
+          "${CMAKE_SOURCE_DIR}/data/help/help.md"
+  COMMENT "Help"
+  VERBATIM)
+
+add_library(o2_session STATIC ${O2_SESSION_SOURCES} "${O2_ROMS_C}" "${O2_HELP_C}")
 set_target_properties(o2_session PROPERTIES
   C_STANDARD 11
   POSITION_INDEPENDENT_CODE ON)

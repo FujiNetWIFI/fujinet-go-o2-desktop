@@ -39,6 +39,7 @@
       sprite and character with its position and bitmap, the grid, all 256
       registers, collisions and sound), the EF9340, the I/O ports and keyboard
       matrix, and the FujiNet cartridge with every FujiBus packet on its link.
+      Built-in, searchable Help covers all of it.
     </p>
     <p>
       Nothing copyrighted is included. CONFIG and FujiNet programs run on the

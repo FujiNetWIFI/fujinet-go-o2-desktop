@@ -25,6 +25,7 @@
 /* FujiNet and Help menus */
 #define IDM_FUJINET_CONFIG 1030
 #define IDM_FUJINET_LOG    1031
+#define IDM_HELP           1039
 #define IDM_ABOUT          1040
 
 /* The main window's banner and status bar */
@@ -32,6 +33,7 @@
 #define IDC_BANNER_IMPORT  2002
 #define IDC_STATUSBAR      2003
 #define IDC_LOG_EDIT       2004
+#define IDC_LOG_HELP       2005
 
 /* Timers */
 #define IDT_LOG_REFRESH    1

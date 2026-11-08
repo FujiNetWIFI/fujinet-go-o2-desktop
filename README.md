@@ -12,7 +12,7 @@ FujiNet Go desktop family (Linux GNOME and KDE, Windows, macOS).
 | **No BIOS needed for FujiNet** | CONFIG and every FujiNet app boot on this app's own stand-in BIOS (about 120 bytes of 8048 code written from the hardware). Games need the real BIOS: **Machine ▸ Import BIOS…**. |
 | **Cartridge** | The FujiNet Odyssey 2 cartridge (`fujinet-firmware` `pico/o2`): the 3K program window, up to 63K of paged app image (APPBANK), the mailbox at `$E0-$E3` / `$F20`, and CONFIG baked in. Its mailbox service (`fujimail`), image planner (`o2map`), APPBANK serving (`o2app`) and wire codec (`fujibus`) are the cartridge firmware's own sources, staged verbatim. A game opened from disk gets its own mapper cartridge instead (standard, 4-in-1, rally, KTAA), as a real console would have it. |
 | **The Voice** | The SP0256 speech module in front of the cartridge (**Preferences ▸ Machine**); its speech ROMs are imported like the BIOS. |
-| **Frontends** | GNOME (GTK4/libadwaita), KDE (Qt6 Widgets), macOS (AppKit), Windows (Win32/D3D11) — each with the display, a Controllers window, Preferences, a live FujiNet console log, and a debugger. |
+| **Frontends** | GNOME (GTK4/libadwaita), KDE (Qt6 Widgets), macOS (AppKit), Windows (Win32/D3D11) — each with the display, a Controllers window, Preferences, a live FujiNet console log, built-in Help and a debugger. |
 | **Packages** | Linux: Flatpak (GNOME and KDE runtimes), DEB, RPM, tar.gz. Windows: ZIP and an NSIS installer. macOS: signed/notarised zips (unsigned without secrets). |
 
 The icon is the family mark in black on the console's case silver
@@ -33,6 +33,15 @@ without the BIOS only FujiNet apps run. See `COMPLIANCE.md`.
 
 The Chess Module (an NSC800) and the Home Computer Module (a Z80) carry a CPU
 of their own and are not emulated yet.
+
+## Help
+
+**Help ▸ FujiNet Go Odyssey 2 Help** (Ctrl+Shift+H, ⌘? on a Mac) opens a
+searchable Help, and the Help buttons in Preferences, the Controllers window,
+the debugger, the console log and the Needs BIOS message open the topic for
+what they show. The text is [data/help/help.md](data/help/help.md), which
+GitHub shows as it is; the build embeds it and every frontend lays it out
+natively.
 
 ## Controllers window (F9)
 

@@ -25,6 +25,7 @@
 
 #include "fujilog.h"
 #include "window.h"
+#include "help/help_window.h"
 
 #include <string.h>
 
@@ -181,12 +182,13 @@ static AdwPreferencesPage *build_roms_page(PrefsState *state)
     int i;
 
     adw_preferences_page_set_title(page, "ROMs");
-    adw_preferences_page_set_name(page, "roms");
+    adw_preferences_page_set_name(page, "ROMs");
     adw_preferences_page_set_icon_name(page, "media-flash-symbolic");
 
     /* the buttons and the folder, first */
     group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
     adw_preferences_group_set_title(group, "Import");
+    adw_preferences_group_set_header_suffix(group, o2_help_button("prefs/ROMs"));
     row = info_row("Import ROMs",
         "Your own copies: single files, a zip (MAME's videopac.zip, i8244.zip or "
         "videopacp.zip work) or a folder. Each is recognised by its size and "
@@ -480,6 +482,13 @@ static AdwPreferencesGroup *new_group(AdwPreferencesPage *page, const char *titl
     adw_preferences_group_set_title(g, title);
     if (description)
         adw_preferences_group_set_description(g, description);
+    /* the first group on a page carries the page's Help button */
+    if (!g_object_get_data(G_OBJECT(page), "o2-help-done")) {
+        char ctx[64];
+        g_snprintf(ctx, sizeof ctx, "prefs/%s", adw_preferences_page_get_name(page));
+        adw_preferences_group_set_header_suffix(g, o2_help_button(ctx));
+        g_object_set_data(G_OBJECT(page), "o2-help-done", GINT_TO_POINTER(1));
+    }
     adw_preferences_page_add(page, g);
     return g;
 }
@@ -489,10 +498,10 @@ void o2_prefs_show(O2Window *parent, o2session *session,
 {
     PrefsState *state = g_new0(PrefsState, 1);
     AdwPreferencesDialog *dialog = ADW_PREFERENCES_DIALOG(adw_preferences_dialog_new());
-    AdwPreferencesPage *machine = new_page("Machine", "machine", "applications-games-symbolic");
-    AdwPreferencesPage *video = new_page("Display & Audio", "display", "video-display-symbolic");
-    AdwPreferencesPage *input = new_page("Input", "input", "input-gaming-symbolic");
-    AdwPreferencesPage *net = new_page("FujiNet", "fujinet", "network-wireless-symbolic");
+    AdwPreferencesPage *machine = new_page("Machine", "Machine", "applications-games-symbolic");
+    AdwPreferencesPage *video = new_page("Display & Audio", "Display", "video-display-symbolic");
+    AdwPreferencesPage *input = new_page("Input", "Input", "input-gaming-symbolic");
+    AdwPreferencesPage *net = new_page("FujiNet", "FujiNet", "network-wireless-symbolic");
     AdwPreferencesGroup *group, *external_group;
     GtkWidget *external, *addr, *row;
 

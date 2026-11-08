@@ -23,6 +23,7 @@ add_executable(fujinet-go-o2-macos MACOSX_BUNDLE
   AppDelegate.m
   DisplayView.m
   KeyForward.m
+  help/HelpWindow.m
   SettingsWindow.m
   controllers/ControllersWindow.m
   debugger/DebuggerWindow.m

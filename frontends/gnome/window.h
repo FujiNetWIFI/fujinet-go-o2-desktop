@@ -59,3 +59,7 @@ void o2_window_import_bios(O2Window *self, GtkWidget *over, gboolean folder,
  * it on a dark theme, the darker red on a light one), and ".o2-pill" makes a
  * label a small rounded indicator. Installed once by the main window. */
 void o2_install_accent_css(void);
+
+/* The Help context the main window shows now: "main", or "prefs/<page>"
+ * while Preferences is open. */
+const char *o2_window_help_context(O2Window *self);

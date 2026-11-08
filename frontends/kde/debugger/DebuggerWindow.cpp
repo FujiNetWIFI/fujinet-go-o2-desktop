@@ -20,7 +20,9 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTextBlock>
+#include <QShortcut>
 #include <QTextCursor>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <cstdio>
@@ -30,6 +32,7 @@
 #include "ChipTabs.h"
 #include "DebugUi.h"
 #include "VideoTab.h"
+#include "../help/HelpWindow.h"
 
 #define DISASM_WINDOW 48
 
@@ -122,6 +125,18 @@ DebuggerWindow::DebuggerWindow(o2session *session, QWidget *parent)
     m_cart = new CartTab(m_dbg);
     tabs->addTab(m_cart, QStringLiteral("Cart"));
     tabs->addTab(buildFujinet(), QStringLiteral("FujiNet"));
+
+    /* a Help button for the tab that shows, and F1 */
+    auto *help = qobject_cast<QToolButton *>(o2HelpButton(QString()));
+    help->setAutoRaise(false);
+    help->setText(QStringLiteral("Help"));
+    help->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    tabs->setCornerWidget(help, Qt::TopRightCorner);
+    auto setContext = [this](int page) {
+        setProperty("o2HelpContext", QStringLiteral("debugger/%1").arg(QLatin1String(kTabNames[page])));
+    };
+    setContext(0);
+    new QShortcut(QKeySequence(Qt::Key_F1), this, [this] { o2HelpFor(this); });
     /* O2_DEBUGGER_TAB: an index, or a tab's name (or the start of one) */
     if (qEnvironmentVariableIsSet("O2_DEBUGGER_TAB")) {
         const QString want = qEnvironmentVariable("O2_DEBUGGER_TAB").trimmed().toLower();
@@ -136,7 +151,11 @@ DebuggerWindow::DebuggerWindow(o2session *session, QWidget *parent)
         }
         if (n >= 0 && n < tabs->count()) tabs->setCurrentIndex(n);
     }
-    connect(tabs, &QTabWidget::currentChanged, this, [this](int page) { refreshTab(page); });
+    connect(tabs, &QTabWidget::currentChanged, this, [this, setContext](int page) {
+        setContext(page);
+        refreshTab(page);
+    });
+    setContext(tabs->currentIndex());
     root->addWidget(tabs, 1);
     setCentralWidget(central);
 

@@ -40,6 +40,7 @@
 #include <wchar.h>
 
 #include "dbg_internal.h"
+#include "../help/help_window.h"
 
 #ifndef EM_SETCUEBANNER
 #define EM_SETCUEBANNER 0x1501
@@ -58,7 +59,7 @@
 
 
 enum {
-    IDC_RUN = 1000, IDC_STEP, IDC_OVER, IDC_OUT, IDC_SCAN, IDC_FRAME, IDC_LOAD_SYMBOLS, IDC_SAVE,
+    IDC_RUN = 1000, IDC_STEP, IDC_OVER, IDC_OUT, IDC_SCAN, IDC_FRAME, IDC_LOAD_SYMBOLS, IDC_SAVE, IDC_HELP_BTN,
     IDC_STATUS, IDC_TABS,
     IDC_PROMPT_OUT, IDC_PROMPT_IN,
     IDC_FIELD0, IDC_FIELD_LAST = IDC_FIELD0 + NFIELDS - 1,
@@ -106,6 +107,9 @@ static const char *const kInputNames[NINPUTS] = { "Timer flag", "EN TCNTI", "EN 
 /* The page names O2_DEBUGGER_TAB accepts, by page. */
 static const char *const kPageNames[PAGE_COUNT] = { "prompt", "cpu", "disassembly", "video", "ef9340",
                                                     "io", "breakpoints", "cart", "fujinet" };
+static const char *const kHelpContexts[PAGE_COUNT] = {
+    "debugger/prompt", "debugger/cpu", "debugger/disassembly", "debugger/video", "debugger/ef9340",
+    "debugger/io", "debugger/breakpoints", "debugger/cart", "debugger/fujinet" };
 static const wchar_t *const kPageTitles[PAGE_COUNT] = {
     L"Prompt", L"CPU && RAM", L"Disassembly", L"Video", L"EF9340", L"Sound && I/O", L"Breakpoints",
     L"Cart", L"FujiNet" };
@@ -1465,6 +1469,7 @@ static void build_controls(debugger *d)
     d->frame_btn = button(d, L"Frame+1", IDC_FRAME, -1, -1);
     d->load_symbols = button(d, L"Load symbols...", IDC_LOAD_SYMBOLS, -1, -1);
     d->save = button(d, L"Save...", IDC_SAVE, -1, -1);
+    d->help_btn = button(d, L"Help", IDC_HELP_BTN, -1, -1);
     d->status = mk(d, 0, L"STATIC", L"Running", SS_RIGHT | SS_ENDELLIPSIS | SS_NOPREFIX, IDC_STATUS, -1, -1, 0);
 
     /* Prompt */
@@ -1908,6 +1913,7 @@ static void layout(debugger *d)
     put(d->frame_btn, bx, y, S(84), rh + 2);             bx += S(90);
     put(d->load_symbols, bx, y, S(120), rh + 2);         bx += S(126);
     put(d->save, bx, y, S(84), rh + 2);                  bx += S(90);
+    put(d->help_btn, bx, y, S(72), rh + 2);              bx += S(78);
     put(d->status, bx, y + (rh - d->ui_h) / 2 + 1, client.right - bx - S(8) > S(40) ? client.right - bx - S(8) : S(40),
         d->ui_h + 2);
 
@@ -1952,6 +1958,8 @@ static void layout(debugger *d)
 static void show_page(debugger *d, int page)
 {
     d->page = page;
+    /* Help, F1 and Ctrl+Shift+H open the tab's section */
+    o2_help_set_context(d->hwnd, kHelpContexts[page], 1);
     apply_visibility(d);
     layout(d);
     refresh_page(d, 1);
@@ -2079,6 +2087,7 @@ static void on_command(debugger *d, int id, int code, HWND src)
     case IDC_SYMS_FILE: load_symbols(d, 0); break;
     case IDC_SYMS_CART: load_symbols(d, 1); break;
     case IDC_SAVE: save_menu(d); break;
+    case IDC_HELP_BTN: o2_help_for(d->hwnd); break;
     case IDC_FOLLOW_PC: dbg_refresh_disasm(d); break;
     case IDC_VIEW_MODE:
         if (code == CBN_SELCHANGE) refresh_video(d, 0);
@@ -2355,6 +2364,7 @@ void o2_debugger_show(HWND parent, o2session *session)
 
     d->page = page_from_env();
     SendMessageW(d->tabs, TCM_SETCURSEL, (WPARAM)d->page, 0);
+    o2_help_set_context(d->hwnd, kHelpContexts[d->page], 1);
     apply_visibility(d);
     layout(d);
 

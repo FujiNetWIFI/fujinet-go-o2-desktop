@@ -34,6 +34,7 @@
 #include "SoftDisplayWidget.h"
 #include "controllers/ControllersWindow.h"
 #include "debugger/DebuggerWindow.h"
+#include "help/HelpWindow.h"
 
 namespace {
 
@@ -46,6 +47,16 @@ bool envOn(const char *name)
 {
     const QByteArray v = qgetenv(name);
     return !v.isEmpty() && v[0] != '0';
+}
+
+/* An action whose key works from every window of the app (the Controllers
+ * window and the Debugger have the keyboard too). */
+QAction *appShortcut(QWidget *owner, QAction *a, const QKeySequence &key)
+{
+    a->setShortcut(key);
+    a->setShortcutContext(Qt::ApplicationShortcut);
+    owner->addAction(a);
+    return a;
 }
 
 /* A status line that elides instead of widening the window. */
@@ -69,6 +80,7 @@ MainWindow::MainWindow(o2session *session, QWidget *parent)
     : QMainWindow(parent), m_session(session)
 {
     setWindowTitle(QStringLiteral("FujiNet Go Odyssey 2"));
+    setProperty("o2HelpContext", QStringLiteral("main"));
     /* the 243 lines three times over, at the TV's 4:3, and the chrome */
     resize(972, 729 + 60);
     setAcceptDrops(true);
@@ -261,6 +273,12 @@ void MainWindow::buildMenus()
     });
 
     QMenu *help = menuBar()->addMenu(QStringLiteral("&Help"));
+    connect(appShortcut(this, help->addAction(QStringLiteral("FujiNet Go Odyssey 2 &Help")),
+                        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H)),
+            &QAction::triggered, this, [this] {
+        o2HelpFor(QApplication::activeWindow() ? QApplication::activeWindow() : this);
+    });
+    help->addSeparator();
     help->addAction(QStringLiteral("&About FujiNet Go Odyssey 2"), this, &MainWindow::showAbout);
     syncMenus();
 }
@@ -487,9 +505,16 @@ void MainWindow::explainRefusal(const QString &title, const QString &why, std::f
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setInformativeText(detail);
     QPushButton *import = box->addButton(QStringLiteral("Import BIOS..."), QMessageBox::AcceptRole);
+    QPushButton *help = box->addButton(QStringLiteral("Help"), QMessageBox::HelpRole);
     box->addButton(QStringLiteral("Not Now"), QMessageBox::RejectRole);
     box->setDefaultButton(import);
-    connect(box, &QMessageBox::buttonClicked, this, [this, import, retry](QAbstractButton *b) {
+    connect(box, &QMessageBox::buttonClicked, this, [this, import, help, retry, title, why](QAbstractButton *b) {
+        if (b == help) {
+            /* the topic opens and the message comes back, Import button and all */
+            o2HelpShow(this, QStringLiteral("nobios"));
+            explainRefusal(title, why, retry);
+            return;
+        }
         if (b != import) return;
         if (SettingsDialog::importRoms(this, m_session, false) <= 0) return;
         if (retry) retry(); else afterImport();

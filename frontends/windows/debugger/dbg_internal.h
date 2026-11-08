@@ -67,7 +67,7 @@ typedef struct {
     HWND hwnd;
     HWND tabs;
     HINSTANCE inst;
-    HWND run_btn, step_btn, over_btn, out_btn, scan_btn, frame_btn, load_symbols, save, status;
+    HWND run_btn, step_btn, over_btn, out_btn, scan_btn, frame_btn, load_symbols, save, help_btn, status;
 
     HWND prompt_out, prompt_in;
 

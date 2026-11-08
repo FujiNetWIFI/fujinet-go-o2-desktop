@@ -86,6 +86,12 @@ add_test(NAME roms_import COMMAND roms_import_test)
 o2_session_test(media_test media_test.c)
 add_test(NAME media COMMAND media_test)
 
+# The built-in Help covers what the app has: settings, machines, keys, ports,
+# the debugger's tabs and prompt commands, and every context a Help button
+# opens.
+o2_session_test(help_test help_test.c)
+add_test(NAME help COMMAND help_test)
+
 # The external-FujiNet address field's parser.
 o2_session_test(hostport_test hostport_test.c)
 add_test(NAME hostport COMMAND hostport_test)

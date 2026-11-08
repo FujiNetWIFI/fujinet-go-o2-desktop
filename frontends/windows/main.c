@@ -36,6 +36,7 @@
 #include "debugger/dbg_window.h"
 #include "display.h"
 #include "fujilog.h"
+#include "help/help_window.h"
 #include "import.h"
 #include "key_forward.h"
 #include "prefs.h"
@@ -99,40 +100,60 @@ static void notice(const char *text)
     update_status();
 }
 
-/* A question with two buttons of our own words. Task dialogs need the
- * version 6 common controls (the manifest asks for them); looked up rather
- * than imported, so a process without them still gets a plain Yes/No. 1 for
- * the first button. */
-static int ask(HWND owner, const char *text, const char *title, const char *yes, const char *no)
+/* The task dialog's Help button (a third button that does not close it). */
+#define ASK_YES  1001
+#define ASK_NO   1002
+#define ASK_HELP 1003
+
+static HRESULT CALLBACK ask_callback(HWND dlg, UINT note, WPARAM wp, LPARAM lp, LONG_PTR ref)
+{
+    (void)lp;
+    if (note == TDN_BUTTON_CLICKED && wp == ASK_HELP) {
+        o2_help_show(dlg, (const char *)ref);
+        return S_FALSE;
+    }
+    return S_OK;
+}
+
+/* A question with two buttons of our own words, and a Help button that opens
+ * the help context (when not NULL). Task dialogs need the version 6 common
+ * controls (the manifest asks for them); looked up rather than imported, so
+ * a process without them still gets a plain Yes/No. 1 for the first button. */
+static int ask(HWND owner, const char *text, const char *title, const char *yes, const char *no,
+               const char *help)
 {
     typedef HRESULT (WINAPI *task_fn)(const TASKDIALOGCONFIG *, int *, int *, BOOL *);
     HMODULE cc = LoadLibraryA("comctl32.dll");
     task_fn fn = cc ? (task_fn)(void (*)(void))GetProcAddress(cc, "TaskDialogIndirect") : NULL;
     if (fn) {
         wchar_t *wt = o2_wide_dup(text), *wc = o2_wide_dup(title);
-        wchar_t *wy = o2_wide_dup(yes), *wn = o2_wide_dup(no);
-        TASKDIALOG_BUTTON buttons[2];
+        wchar_t *wy = o2_wide_dup(yes), *wn = o2_wide_dup(no), *wh = o2_wide_dup("Help");
+        TASKDIALOG_BUTTON buttons[3];
         TASKDIALOGCONFIG cfg;
         int chosen = 0;
         HRESULT hr;
         memset(&cfg, 0, sizeof cfg);
-        buttons[0].nButtonID = 1001;
+        buttons[0].nButtonID = ASK_YES;
         buttons[0].pszButtonText = wy;
-        buttons[1].nButtonID = 1002;
+        buttons[1].nButtonID = ASK_NO;
         buttons[1].pszButtonText = wn;
+        buttons[2].nButtonID = ASK_HELP;
+        buttons[2].pszButtonText = wh;
         cfg.cbSize = sizeof cfg;
         cfg.hwndParent = owner;
         cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
         cfg.pszWindowTitle = wc;
         cfg.pszMainIcon = TD_INFORMATION_ICON;
         cfg.pszContent = wt;
-        cfg.cButtons = 2;
+        cfg.cButtons = help ? 3 : 2;
         cfg.pButtons = buttons;
-        cfg.nDefaultButton = 1001;
+        cfg.nDefaultButton = ASK_YES;
+        cfg.pfCallback = ask_callback;
+        cfg.lpCallbackData = (LONG_PTR)help;
         hr = fn(&cfg, &chosen, NULL, NULL);
-        free(wt); free(wc); free(wy); free(wn);
+        free(wt); free(wc); free(wy); free(wn); free(wh);
         if (SUCCEEDED(hr))
-            return chosen == 1001;
+            return chosen == ASK_YES;
     }
     return o2_message(owner, text, title, MB_ICONINFORMATION | MB_YESNO) == IDYES;
 }
@@ -263,7 +284,7 @@ static void open_cart(const char *path)
             break;
         }
         /* the refused cartridge is tried again once the ROMs are in */
-        if (!ask(g_hwnd, msg, "BIOS needed", "Import BIOS...", "Not Now") || !import_bios(g_hwnd, 0))
+        if (!ask(g_hwnd, msg, "BIOS needed", "Import BIOS...", "Not Now", "nobios") || !import_bios(g_hwnd, 0))
             break;
     }
     update_status();
@@ -307,7 +328,7 @@ static void poll_needs_bios(void)
              "Odyssey 2 games call routines in the BIOS, so only the real one runs them; "
              "CONFIG and FujiNet apps run without it.\n\n"
              "Machine > Import BIOS... adds your own dump.",
-             "BIOS needed", "Import BIOS...", "Not Now"))
+             "BIOS needed", "Import BIOS...", "Not Now", "nobios"))
         return;
     import_bios(g_hwnd, 0);
 }
@@ -455,6 +476,8 @@ static void build_menu(HWND hwnd)
     AppendMenuA(fuji, MF_STRING, IDM_FUJINET_CONFIG, "&Web UI");
     AppendMenuA(fuji, MF_STRING, IDM_FUJINET_LOG, "Console &Log");
 
+    AppendMenuA(help, MF_STRING, IDM_HELP, APP_TITLE " &Help\tCtrl+Shift+H");
+    AppendMenuA(help, MF_SEPARATOR, 0, NULL);
     AppendMenuA(help, MF_STRING, IDM_ABOUT, "&About " APP_TITLE);
 
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)machine, "&Machine");
@@ -721,6 +744,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_SETTINGS: show_prefs(); return 0;
         case IDM_FUJINET_LOG: show_log(); return 0;
         case IDM_FUJINET_CONFIG: open_web_ui(hwnd); return 0;
+        case IDM_HELP: o2_help_for(hwnd); return 0;
         case IDM_ABOUT: show_about(); return 0;
         case IDM_EXIT: PostMessage(hwnd, WM_CLOSE, 0, 0); return 0;
         default: break;
@@ -874,6 +898,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         SendMessageW(g_banner_text, WM_SETFONT, (WPARAM)ui, TRUE);
         SendMessageW(g_banner_import, WM_SETFONT, (WPARAM)ui, TRUE);
     }
+    o2_help_set_context(g_hwnd, "main", 0);       /* F1 is the console's RESET here */
     g_display = o2_display_create(g_hwnd, g_session);
     o2_display_set_options(g_aspect, g_smooth);
     layout_children();
@@ -909,6 +934,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
          * regardless of which child control has the focus. */
         if (o2_debugger_pretranslate(&msg)) continue;
         if (o2_prefs_pretranslate(&msg)) continue;
+        if (o2_help_pretranslate(&msg)) continue;
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }

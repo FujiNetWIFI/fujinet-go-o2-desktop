@@ -28,7 +28,8 @@
       command prompt, the 8048's registers and RAM, a disassembly with
       breakpoints, every object the 8244 draws with its position and the
       picture as the chip renders it, the text chip, the keyboard matrix and
-      sticks, the cartridge, and the FujiNet traffic.
+      sticks, the cartridge, and the FujiNet traffic. Built-in, searchable Help
+      covers all of it.
     </p>
     <p>
       Nothing copyrighted is included. CONFIG and the FujiNet apps boot on
