@@ -175,6 +175,36 @@ int main(void)
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_START, false);
     expect(s, 0, 0, 0, "released");
 
+    /* A trigger past half travel used to deadlock the gamepad thread on its
+     * own lock, and the Controllers panel's timers (same lock) froze the UI
+     * with it. A hang here is a ctest timeout. */
+    o2session_binding_set_button(s, O2_TARGET_KEY(24), O2_PAD_BTN_LEFT_TRIGGER, NULL, 0);
+    SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 32767);
+    expect(s, 0, 1, 0, "left trigger, bound to Q, holds the key");
+    (void)o2session_gamepad_generation(s);
+    for (i = 0; i < o2session_gamepad_count(s); i++)
+        (void)o2session_gamepad_effective_port(s, i);
+    printf("ok: session lock still free with a trigger held\n");
+    SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 0);
+    expect(s, 0, 0, 0, "left trigger released");
+    o2session_gamepad_capture_begin(s);
+    SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+    {
+        int btn = -1, got = 0;
+        for (i = 0; i < 100 && !got; i++) {
+            got = o2session_gamepad_capture_poll(s, &btn);
+            if (!got) sleep_ms(20);
+        }
+        if (got && btn == O2_PAD_BTN_RIGHT_TRIGGER)
+            printf("ok: map mode captures a trigger\n");
+        else {
+            printf("FAIL: map mode captures a trigger (%d)\n", btn);
+            failures++;
+        }
+    }
+    SDL_SetJoystickVirtualAxis(vj, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 0);
+    o2session_bindings_reset(s);
+
     /* a D-pad direction rebound elsewhere stops steering */
     o2session_binding_set_button(s, O2_TARGET_KEY(24), O2_PAD_BTN_DPAD_UP, NULL, 0);
     SDL_SetJoystickVirtualButton(vj, SDL_GAMEPAD_BUTTON_DPAD_UP, true);
