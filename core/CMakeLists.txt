@@ -66,8 +66,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/o2/machine.c"
   endforeach()
 endif()
 
+# src/pad_assign.c is the session's remembered pad -> port table, kept here
+# (pure, no SDL) so its test links the core alone.
+set(O2_PAD_ASSIGN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/pad_assign.c")
+
 add_library(o2_core STATIC
-  ${O2_EMU_SOURCES} ${O2_FUJI_SOURCES} ${O2_DEBUGGER_SOURCES})
+  ${O2_EMU_SOURCES} ${O2_FUJI_SOURCES} ${O2_DEBUGGER_SOURCES}
+  ${O2_PAD_ASSIGN_SOURCE})
 set_target_properties(o2_core PROPERTIES
   C_STANDARD 11
   POSITION_INDEPENDENT_CODE ON)
@@ -92,7 +97,7 @@ endif()
 
 # Our own modules are warning-clean; the staged tree is built with whatever
 # warnings upstream is comfortable with.
-set(O2_WARN_SOURCES ${O2_EMU_SOURCES} ${O2_DEBUGGER_SOURCES})
+set(O2_WARN_SOURCES ${O2_EMU_SOURCES} ${O2_DEBUGGER_SOURCES} ${O2_PAD_ASSIGN_SOURCE})
 list(REMOVE_ITEM O2_WARN_SOURCES debugger/symbols_builtin.c)
 set_property(SOURCE ${O2_WARN_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
   "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra>")
