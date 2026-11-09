@@ -50,7 +50,8 @@ keyboard** (numeric row, + − × ÷ =, YES NO CLEAR ENTER, QWERTYUIOP, ASDFGHJK
 ZXCVBNM . ?, SPACE, the red RESET key) and the two joysticks. Click a key to
 press it; held keys light up in the accent colour whoever holds them. **Map**
 rebinds any key or stick control to a host key or a gamepad button (a key moves
-to its new target and leaves its old one), **Defaults** puts them back.
+to its new target and leaves its old one), **Defaults** puts them back. A
+gamepad's stick (Automatic, Stick 1 or Stick 2) is remembered between runs.
 
 | | Default |
 |---|---|

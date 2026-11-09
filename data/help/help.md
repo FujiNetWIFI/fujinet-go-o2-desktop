@@ -194,7 +194,8 @@ Key combinations with the Super (Windows) key are the desktop's.
 
 Gamepads are picked up as they are plugged in, and can come and go at any
 time. The first is Stick 1, the second Stick 2; Preferences ▸ Input can fix
-which is which, and a pad plugged back in gets its stick back.
+which is which. A pad's stick is remembered between runs: plug it back in,
+or start the app again, and it gets its stick back.
 
 | Gamepad | Does |
 |---|---|
@@ -461,7 +462,9 @@ On KDE, Windows and the Mac these are two pages, Display and Audio.
   directions as the D-pad does (setting `analog_joystick`).
 - **Gamepads**: each one plugged in, and which stick it drives. A new
   gamepad drives Stick 1, the next Stick 2; choose *Stick 1* or *Stick 2*
-  to fix it, or *Automatic*.
+  to fix it, or *Automatic*. The choice is remembered between runs (setting
+  `pad_assign`), by the gamepad's id and name; two identical gamepads cannot
+  be told apart, so the first to connect gets it.
 
 The keys and buttons are changed in the Controllers window (see
 [Changing the controls](#changing-the-controls)).
@@ -491,6 +494,7 @@ The keys the Preferences pages set:
 | `fujinet_external_addr` | `host:port` |
 | `enable_audio` | 1 or 0 |
 | `enable_gamepad` | 1 or 0 |
+| `pad_assign` | the gamepads fixed to a stick, remembered between runs; written by the app |
 | `volume` | 0 to 100 |
 | `aspect` | 0 the television's 4:3, 1 square pixels |
 | `smooth` | 1 blends the pixels when stretched, 0 keeps them sharp |
