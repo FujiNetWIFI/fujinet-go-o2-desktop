@@ -1041,6 +1041,16 @@ static void on_defaults_clicked(GtkButton *b, gpointer d)
     refresh_all();
 }
 
+/* "controllers_show_bindings"; falls back to the older key names. */
+static int show_bindings_setting(void)
+{
+    static const char *const olds[] = { "controllers_key_names", "controllers_bindings", "show_bindings" };
+    int val = o2session_get_int(g_session, "controllers_show_bindings", -1);
+    for (size_t idx = 0; val < 0 && idx < sizeof olds / sizeof olds[0]; idx++)
+        val = o2session_get_int(g_session, olds[idx], -1);
+    return val > 0;
+}
+
 static void on_show_bindings(GtkCheckButton *b, gpointer d)
 {
     (void)d;
@@ -1150,7 +1160,7 @@ static void build_window(GtkWindow *parent)
     g_signal_connect(defaults, "clicked", G_CALLBACK(on_defaults_clicked), NULL);
     g_show_bindings = gtk_check_button_new_with_label("Show bindings");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(g_show_bindings),
-        o2session_get_int(g_session, "controllers_show_bindings", 0) != 0);
+        show_bindings_setting());
     gtk_widget_set_focus_on_click(g_show_bindings, FALSE);
     g_signal_connect(g_show_bindings, "toggled", G_CALLBACK(on_show_bindings), NULL);
     g_map_hint = gtk_label_new("");

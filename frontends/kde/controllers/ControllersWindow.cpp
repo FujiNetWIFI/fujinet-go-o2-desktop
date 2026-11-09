@@ -753,9 +753,16 @@ ControllersWindow::ControllersWindow(o2session *session, QWidget *parent)
     m_keyNames = new QCheckBox(QStringLiteral("Key names"));
     m_keyNames->setFocusPolicy(Qt::NoFocus);
     m_keyNames->setToolTip(QStringLiteral("Show the host key bound to each key cap"));
-    m_keyNames->setChecked(o2session_get_int(session, "controllers_key_names", 0) != 0);
+    {
+        /* "controllers_show_bindings"; falls back to the older key names. */
+        static const char *const olds[] = { "controllers_key_names", "controllers_bindings", "show_bindings" };
+        int val = o2session_get_int(session, "controllers_show_bindings", -1);
+        for (size_t idx = 0; val < 0 && idx < sizeof olds / sizeof olds[0]; idx++)
+            val = o2session_get_int(session, olds[idx], -1);
+        m_keyNames->setChecked(val > 0);
+    }
     connect(m_keyNames, &QCheckBox::toggled, this, [this](bool on) {
-        o2session_set_int(m_session, "controllers_key_names", on ? 1 : 0);
+        o2session_set_int(m_session, "controllers_show_bindings", on ? 1 : 0);
         m_console->setKeyNames(on);
     });
     m_console->setKeyNames(m_keyNames->isChecked());

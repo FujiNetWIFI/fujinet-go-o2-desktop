@@ -423,7 +423,14 @@ static void drawFitted(NSString *text, NSRect r, CGFloat size, BOOL bold, NSColo
     _console = [[O2ConsoleView alloc] initWithFrame:NSZeroRect];
     _console.owner = self;
     _console.mapTarget = -1;
-    _console.showKeys = o2session_get_int(_session, "show_bindings", 0) != 0;
+    {
+        /* "controllers_show_bindings"; falls back to the older key names. */
+        static const char *const olds[] = { "controllers_key_names", "controllers_bindings", "show_bindings" };
+        int val = o2session_get_int(_session, "controllers_show_bindings", -1);
+        for (size_t idx = 0; val < 0 && idx < sizeof olds / sizeof olds[0]; idx++)
+            val = o2session_get_int(_session, olds[idx], -1);
+        _console.showKeys = val > 0;
+    }
     [_content addSubview:_console];
 
     /* Gamepads: one row per pad, its name, the stick it drives and the one it
@@ -773,7 +780,7 @@ static CGFloat snap(CGFloat v)
 {
     (void)sender;
     const BOOL on = [_showKeysBox state] == NSControlStateValueOn;
-    o2session_set_int(_session, "show_bindings", on ? 1 : 0);
+    o2session_set_int(_session, "controllers_show_bindings", on ? 1 : 0);
     _console.showKeys = on;
     [_console setNeedsDisplay:YES];
 }
