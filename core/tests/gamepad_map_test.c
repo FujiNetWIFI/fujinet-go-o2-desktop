@@ -32,10 +32,10 @@
 static int failures;
 static int vport;   /* the stick the virtual pad was given */
 
-static void check(int ok, const char *what)
+static void check(int pass, const char *what)
 {
-    printf("%s: %s\n", ok ? "ok" : "FAIL", what);
-    if (!ok) failures++;
+    printf("%s: %s\n", pass ? "ok" : "FAIL", what);
+    if (!pass) failures++;
 }
 
 static void sleep_ms(int ms)
@@ -66,31 +66,31 @@ static void expect(o2session *s, unsigned want, int key, int reset, const char *
 
 #define B(a) (1u << (a))
 
-/* A session on p's directories with only the gamepad thread. */
-static o2session *session_up(o2session_paths *p)
+/* A session in the paths' directories with only the gamepad thread. */
+static o2session *session_up(o2session_paths *paths)
 {
-    o2session *s = o2session_new(p);
-    o2session_start_opts o;
-    if (!s)
+    o2session *sess = o2session_new(paths);
+    o2session_start_opts opts;
+    if (!sess)
         return NULL;
-    o2session_default_opts(s, &o);
-    o.enable_fujinet = 0;
-    o.enable_audio = 0;
-    o.enable_gamepad = 1;
-    if (o2session_start(s, &o) != 0) {
-        printf("FAIL: start: %s\n", o2session_last_error(s));
-        o2session_free(s);
+    o2session_default_opts(sess, &opts);
+    opts.enable_fujinet = 0;
+    opts.enable_audio = 0;
+    opts.enable_gamepad = 1;
+    if (o2session_start(sess, &opts) != 0) {
+        printf("FAIL: start: %s\n", o2session_last_error(sess));
+        o2session_free(sess);
         return NULL;
     }
-    return s;
+    return sess;
 }
 
 /* The virtual pad's slot now, or -1. */
-static int pad_slot_now(o2session *s)
+static int pad_slot_now(o2session *sess)
 {
-    for (int idx = 0; idx < o2session_gamepad_count(s); idx++) {
+    for (int idx = 0; idx < o2session_gamepad_count(sess); idx++) {
         char name[64];
-        o2session_gamepad_name(s, idx, name, sizeof name);
+        o2session_gamepad_name(sess, idx, name, sizeof name);
         if (strcmp(name, PAD_NAME) == 0)
             return idx;
     }
@@ -99,41 +99,41 @@ static int pad_slot_now(o2session *s)
 
 /* The virtual pad's slot once the pad thread has found it (polled, up to
  * five seconds: a slow runner is slow to enumerate), or -1. */
-static int wait_for_pad(o2session *s)
+static int wait_for_pad(o2session *sess)
 {
-    int idx = pad_slot_now(s);
+    int idx = pad_slot_now(sess);
     for (int tries = 0; tries < 250 && idx < 0; tries++) {
         sleep_ms(20);
-        idx = pad_slot_now(s);
+        idx = pad_slot_now(sess);
     }
     return idx;
 }
 
 /* The pad_assign setting with the pad's entry in it? */
-static int has_entry(o2session *s, const char *guid, int port)
+static int has_entry(o2session *sess, const char *guid, int port)
 {
     char want[160];
     snprintf(want, sizeof want, "%s|%s=%d", guid, PAD_NAME, port);
-    return strstr(o2session_get_str(s, "pad_assign", ""), want) != NULL;
+    return strstr(o2session_get_str(sess, "pad_assign", ""), want) != NULL;
 }
 
 /* A stale entry (GUID guid, the pad's name) goes to a different pad of the
  * same name that connects first, by the name fallback. The pad with exactly
  * that GUID then connects and takes it over: the decoy goes automatic. No pad
  * is attached on entry; both are detached on return. */
-static void takeover(o2session_paths *p, SDL_VirtualJoystickDesc *desc,
+static void takeover(o2session_paths *paths, SDL_VirtualJoystickDesc *desc,
                      const char *guid, int want)
 {
     SDL_VirtualJoystickDesc other = *desc;
     SDL_JoystickID decoy, owner = 0;
     char text[300], gid[64];
-    o2session *s = session_up(p);
+    o2session *sess = session_up(paths);
     int idx;
 
-    if (!s) { failures++; return; }
+    if (!sess) { failures++; return; }
     snprintf(text, sizeof text, "%s|%s=%d", guid, PAD_NAME, want);
-    o2session_set_str(s, "pad_assign", text);
-    o2session_free(s);
+    o2session_set_str(sess, "pad_assign", text);
+    o2session_free(sess);
 
     other.vendor_id = (Uint16)(desc->vendor_id ^ 0x5a5a);
     other.product_id = (Uint16)(desc->product_id ^ 0xa5a5);
@@ -145,21 +145,21 @@ static void takeover(o2session_paths *p, SDL_VirtualJoystickDesc *desc,
             SDL_DetachVirtualJoystick(decoy);
         return;
     }
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(decoy); return; }
-    idx = wait_for_pad(s);
-    check(idx >= 0 && o2session_gamepad_assignment(s, idx) == want,
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(decoy); return; }
+    idx = wait_for_pad(sess);
+    check(idx >= 0 && o2session_gamepad_assignment(sess, idx) == want,
           "takeover: a same-name pad with another GUID gets the entry by name");
     owner = SDL_AttachVirtualJoystick(desc);
-    for (int tries = 0; tries < 250 && o2session_gamepad_count(s) < 2; tries++)
+    for (int tries = 0; tries < 250 && o2session_gamepad_count(sess) < 2; tries++)
         sleep_ms(20);
-    check(owner && o2session_gamepad_count(s) == 2, "takeover: the second pad is picked up");
-    if (o2session_gamepad_count(s) == 2) {
-        check(o2session_gamepad_assignment(s, 1) == want,
+    check(owner && o2session_gamepad_count(sess) == 2, "takeover: the second pad is picked up");
+    if (o2session_gamepad_count(sess) == 2) {
+        check(o2session_gamepad_assignment(sess, 1) == want,
               "the pad with the entry's GUID takes the assignment over");
-        check(o2session_gamepad_assignment(s, 0) == -1, "and the name-only pad is automatic");
+        check(o2session_gamepad_assignment(sess, 0) == -1, "and the name-only pad is automatic");
     }
-    o2session_free(s);
+    o2session_free(sess);
     if (owner)
         SDL_DetachVirtualJoystick(owner);
     SDL_DetachVirtualJoystick(decoy);
@@ -167,11 +167,11 @@ static void takeover(o2session_paths *p, SDL_VirtualJoystickDesc *desc,
 
 /* A pad's port assignment survives a restart. The virtual pad stays attached
  * across the sessions (SDL is held open by the caller). */
-static void persistence(o2session_paths *p)
+static void persistence(o2session_paths *paths)
 {
     SDL_VirtualJoystickDesc desc;
     SDL_JoystickID vid;
-    o2session *s;
+    o2session *sess;
     char guid[64];
     int idx, want, auto_port;
 
@@ -188,46 +188,46 @@ static void persistence(o2session_paths *p)
     }
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(vid), guid, sizeof guid);
 
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(vid); return; }
-    idx = wait_for_pad(s);
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(vid); return; }
+    idx = wait_for_pad(sess);
     check(idx >= 0, "persistence: the pad is picked up");
-    if (idx < 0) { o2session_free(s); SDL_DetachVirtualJoystick(vid); return; }
-    check(o2session_gamepad_assignment(s, idx) == -1, "a pad nobody assigned is automatic");
-    check(strstr(o2session_get_str(s, "pad_assign", ""), guid) == NULL, "and has no entry");
-    auto_port = o2session_gamepad_effective_port(s, idx);
+    if (idx < 0) { o2session_free(sess); SDL_DetachVirtualJoystick(vid); return; }
+    check(o2session_gamepad_assignment(sess, idx) == -1, "a pad nobody assigned is automatic");
+    check(strstr(o2session_get_str(sess, "pad_assign", ""), guid) == NULL, "and has no entry");
+    auto_port = o2session_gamepad_effective_port(sess, idx);
     want = auto_port == 0 ? 1 : 0;
 
-    o2session_gamepad_assign(s, idx, want);
-    check(o2session_gamepad_assignment(s, idx) == want
-          && o2session_gamepad_effective_port(s, idx) == want, "assigning drives the other port");
-    check(has_entry(s, guid, want), "and writes <guid>|<name>=<port> to pad_assign");
+    o2session_gamepad_assign(sess, idx, want);
+    check(o2session_gamepad_assignment(sess, idx) == want
+          && o2session_gamepad_effective_port(sess, idx) == want, "assigning drives the other port");
+    check(has_entry(sess, guid, want), "and writes <guid>|<name>=<port> to pad_assign");
 
     /* the file itself, not just the in-memory store */
     {
         char path[600], line[2048];
         int found = 0;
-        FILE *fp;
-        snprintf(path, sizeof path, "%s/settings.ini", p->config_dir);
-        fp = fopen(path, "r");
-        if (fp) {
-            while (fgets(line, sizeof line, fp))
+        FILE *file;
+        snprintf(path, sizeof path, "%s/settings.ini", paths->config_dir);
+        file = fopen(path, "r");
+        if (file) {
+            while (fgets(line, sizeof line, file))
                 if (!strncmp(line, "pad_assign=", 11) && strstr(line, guid))
                     found = 1;
-            fclose(fp);
+            fclose(file);
         }
         check(found, "the settings file on disk holds it");
     }
 
     /* restart: a new session on the same settings */
-    o2session_free(s);
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(vid); return; }
-    idx = wait_for_pad(s);
+    o2session_free(sess);
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(vid); return; }
+    idx = wait_for_pad(sess);
     check(idx >= 0, "restart: the pad is picked up again");
     if (idx >= 0) {
-        check(o2session_gamepad_assignment(s, idx) == want, "the assignment is restored on device add");
-        check(o2session_gamepad_effective_port(s, idx) == want, "and the pad drives that port");
+        check(o2session_gamepad_assignment(sess, idx) == want, "the assignment is restored on device add");
+        check(o2session_gamepad_effective_port(sess, idx) == want, "and the pad drives that port");
     }
 
     /* a stale GUID (another USB port): the name finds the entry. Rewrite the
@@ -235,56 +235,56 @@ static void persistence(o2session_paths *p)
     {
         char text[300];
         snprintf(text, sizeof text, "ffffffffffffffffffffffffffffffff|%s=%d", PAD_NAME, want);
-        o2session_set_str(s, "pad_assign", text);
+        o2session_set_str(sess, "pad_assign", text);
     }
-    o2session_free(s);
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(vid); return; }
-    idx = wait_for_pad(s);
-    check(idx >= 0 && o2session_gamepad_assignment(s, idx) == want,
+    o2session_free(sess);
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(vid); return; }
+    idx = wait_for_pad(sess);
+    check(idx >= 0 && o2session_gamepad_assignment(sess, idx) == want,
           "a different GUID with the same name gets the assignment too");
 
     /* Automatic removes the entry, and the next run starts automatic */
-    o2session_gamepad_assign(s, idx, want);   /* back under its own GUID */
-    check(has_entry(s, guid, want), "assigned under the pad's own GUID again");
-    o2session_gamepad_assign(s, idx, -1);
-    check(o2session_gamepad_assignment(s, idx) == -1, "Automatic: no explicit port");
-    check(strstr(o2session_get_str(s, "pad_assign", ""), PAD_NAME) == NULL,
+    o2session_gamepad_assign(sess, idx, want);   /* back under its own GUID */
+    check(has_entry(sess, guid, want), "assigned under the pad's own GUID again");
+    o2session_gamepad_assign(sess, idx, -1);
+    check(o2session_gamepad_assignment(sess, idx) == -1, "Automatic: no explicit port");
+    check(strstr(o2session_get_str(sess, "pad_assign", ""), PAD_NAME) == NULL,
           "and the entry is gone from pad_assign");
-    o2session_free(s);
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(vid); return; }
-    idx = wait_for_pad(s);
-    check(idx >= 0 && o2session_gamepad_assignment(s, idx) == -1
-          && o2session_gamepad_effective_port(s, idx) == auto_port, "after a restart it is automatic again");
+    o2session_free(sess);
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(vid); return; }
+    idx = wait_for_pad(sess);
+    check(idx >= 0 && o2session_gamepad_assignment(sess, idx) == -1
+          && o2session_gamepad_effective_port(sess, idx) == auto_port, "after a restart it is automatic again");
 
     /* garbage in the setting is ignored, silently */
-    o2session_set_str(s, "pad_assign", ";;|=;zz|x=9;%%%;" "00000000000000000000000000000000|" PAD_NAME "=7");
-    o2session_free(s);
-    s = session_up(p);
-    if (!s) { failures++; SDL_DetachVirtualJoystick(vid); return; }
-    idx = wait_for_pad(s);
-    check(idx >= 0 && o2session_gamepad_assignment(s, idx) == -1,
+    o2session_set_str(sess, "pad_assign", ";;|=;zz|x=9;%%%;" "00000000000000000000000000000000|" PAD_NAME "=7");
+    o2session_free(sess);
+    sess = session_up(paths);
+    if (!sess) { failures++; SDL_DetachVirtualJoystick(vid); return; }
+    idx = wait_for_pad(sess);
+    check(idx >= 0 && o2session_gamepad_assignment(sess, idx) == -1,
           "a malformed or out-of-range pad_assign leaves the pad automatic");
-    o2session_gamepad_assign(s, idx, want);
-    check(has_entry(s, guid, want), "and a new assignment still writes");
-    o2session_gamepad_assign(s, idx, -1);
+    o2session_gamepad_assign(sess, idx, want);
+    check(has_entry(sess, guid, want), "and a new assignment still writes");
+    o2session_gamepad_assign(sess, idx, -1);
 
     /* a hot replug within a run restores it too */
-    o2session_gamepad_assign(s, idx, want);
+    o2session_gamepad_assign(sess, idx, want);
     SDL_DetachVirtualJoystick(vid);
-    for (int tries = 0; tries < 250 && pad_slot_now(s) >= 0; tries++)
+    for (int tries = 0; tries < 250 && pad_slot_now(sess) >= 0; tries++)
         sleep_ms(20);
-    check(pad_slot_now(s) < 0, "unplugged: the pad is gone");
+    check(pad_slot_now(sess) < 0, "unplugged: the pad is gone");
     vid = SDL_AttachVirtualJoystick(&desc);
-    idx = vid ? wait_for_pad(s) : -1;
-    check(idx >= 0 && o2session_gamepad_assignment(s, idx) == want, "unplugged and plugged back in: the port comes back");
-    o2session_gamepad_assign(s, idx, -1);
+    idx = vid ? wait_for_pad(sess) : -1;
+    check(idx >= 0 && o2session_gamepad_assignment(sess, idx) == want, "unplugged and plugged back in: the port comes back");
+    o2session_gamepad_assign(sess, idx, -1);
 
-    o2session_free(s);
+    o2session_free(sess);
     if (vid)
         SDL_DetachVirtualJoystick(vid);
-    takeover(p, &desc, guid, want);
+    takeover(paths, &desc, guid, want);
 }
 
 int main(void)

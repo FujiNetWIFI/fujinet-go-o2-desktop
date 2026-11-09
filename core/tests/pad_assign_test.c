@@ -1,7 +1,7 @@
 /*
  * pad_assign_test -- the remembered pad -> port table, pure (no SDL, no
  * session): the text form's exact shape, the escaping of the separators and
- * control characters, decode(encode(x)) == x, lookup by GUID then by name,
+ * control characters, decode(encode(tab)) == tab, lookup by GUID then by name,
  * set/remove, the cap, and that malformed input is skipped without a crash.
  *
  * Copyright (C) 2026 Thomas Cherryhomes
@@ -14,10 +14,10 @@
 #include "pad_assign.h"
 
 static int failures;
-static void check(int ok, const char *what)
+static void check(int pass, const char *what)
 {
-    printf("%s: %s\n", ok ? "ok" : "FAIL", what);
-    if (!ok) failures++;
+    printf("%s: %s\n", pass ? "ok" : "FAIL", what);
+    if (!pass) failures++;
 }
 
 #define GUID_A "030000005e040000ea02000000000000"

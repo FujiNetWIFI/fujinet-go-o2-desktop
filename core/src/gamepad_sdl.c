@@ -229,25 +229,25 @@ static int effective_port_locked(gamepad_state *g, int idx);
  * fallback. A pad known only by name takes the entry if no other pad carries
  * it (two identical pads, or one pad known under two GUIDs): then this one
  * stays automatic. Locked by the caller; only reads settings' copy in
- * g->table, never writes. */
-static void restore_assignment(gamepad_state *g, int idx)
+ * state->table, never writes. */
+static void restore_assignment(gamepad_state *state, int idx)
 {
-    pad_slot *slot = &g->pads[idx];
-    int ent = o2_pad_table_find(&g->table, slot->guidstr, slot->name), k;
+    pad_slot *slot = &state->pads[idx];
+    int ent = o2_pad_table_find(&state->table, slot->guidstr, slot->name), kix;
     int exact;
 
-    if (ent < 0 || g->table.entry[ent].port >= O2_PLAYERS) return;
-    exact = !strcmp(g->table.entry[ent].guid, slot->guidstr);
-    for (k = 0; k < g->npads; k++) {
-        pad_slot *other = &g->pads[k];
-        if (k == idx || other->assign < 0 ||
-            o2_pad_table_find(&g->table, other->guidstr, other->name) != ent)
+    if (ent < 0 || state->table.entry[ent].port >= O2_PLAYERS) return;
+    exact = !strcmp(state->table.entry[ent].guid, slot->guidstr);
+    for (kix = 0; kix < state->npads; kix++) {
+        pad_slot *other = &state->pads[kix];
+        if (kix == idx || other->assign < 0 ||
+            o2_pad_table_find(&state->table, other->guidstr, other->name) != ent)
             continue;
         if (!exact || !other->by_name) return;
         other->assign = -1;          /* the entry's owner is here: it wins */
         other->by_name = 0;
     }
-    slot->assign = g->table.entry[ent].port;
+    slot->assign = state->table.entry[ent].port;
     slot->by_name = !exact;
 }
 
@@ -681,13 +681,13 @@ void o2session_gamepad_assign(o2session *s, int idx, int port)
             changed = o2_pad_table_set(&g->table, slot->guidstr, slot->name, port) > 0;
         } else {
             const char *kguid[MAX_PADS], *kname[MAX_PADS];
-            int k, nkeep = 0;
+            int kix, nkeep = 0;
             slot->assign = -1;
             slot->by_name = 0;
-            for (k = 0; k < g->npads; k++)
-                if (k != idx && g->pads[k].assign >= 0) {
-                    kguid[nkeep] = g->pads[k].guidstr;
-                    kname[nkeep++] = g->pads[k].name;
+            for (kix = 0; kix < g->npads; kix++)
+                if (kix != idx && g->pads[kix].assign >= 0) {
+                    kguid[nkeep] = g->pads[kix].guidstr;
+                    kname[nkeep++] = g->pads[kix].name;
                 }
             changed = o2_pad_table_remove(&g->table, slot->guidstr, slot->name,
                                           nkeep, kguid, kname);
