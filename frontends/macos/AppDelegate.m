@@ -129,6 +129,7 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     BOOL _launched;
     NSWindow *_window;
     O2DisplayView *_display;
+    id<NSObject> _activity;          /* no App Nap, no timer coalescing while we run */
     O2ContentView *_content;
     NSTimer *_statusTimer;
     NSTimer *_sysactTimer;
@@ -176,6 +177,13 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
 - (void)applicationDidFinishLaunching:(NSNotification *)note
 {
     (void)note;
+
+    /* An emulator is latency-critical work: App Nap must not throttle the
+     * machine thread or coalesce its timers when the window is behind
+     * another, and Game Mode (Info.plist) asks the system to favour it. */
+    _activity = [[NSProcessInfo processInfo]
+        beginActivityWithOptions:(NSActivityUserInitiated | NSActivityLatencyCritical)
+                          reason:@"Emulating an Odyssey 2"];
 
     /* The 360x243 picture at the TV's 4:3, three times its 243 lines high:
      * 972x729, a comfortable first window on any Mac. */
@@ -513,6 +521,10 @@ static NSArray<UTType *> *typesForExtensions(NSArray<NSString *> *exts)
     [_sysactTimer invalidate];
     [_logTimer invalidate];
     [_display stop];
+    if (_activity) {
+        [[NSProcessInfo processInfo] endActivity:_activity];
+        _activity = nil;
+    }
     o2session_stop(_session);
     o2session_free(_session);
     _session = NULL;
